@@ -6,12 +6,7 @@ router = APIRouter()
 
 @router.get("/items")
 async def get_items() -> Dict[str, Any]:
-    return {
-        "items": [
-            {"id": 1, "name": "Item 1"},
-            {"id": 2, "name": "Item 2"}
-        ]
-    }
+    return {"items": [{"id": 1, "name": "Item 1"}, {"id": 2, "name": "Item 2"}]}
 
 
 @router.get("/items/{item_id}")
