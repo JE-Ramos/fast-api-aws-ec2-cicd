@@ -37,9 +37,13 @@ A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline u
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker (optional, for containerized deployment)
 
-### Initial AWS Setup (One-Time Configuration)
+### IAM Setup for CI/CD (Optional - for GitHub Actions)
 
-Before deploying the infrastructure, you need to create an IAM user with the minimum required permissions. Follow these steps using the AWS Console:
+**When to use:** Only for GitHub Actions automated deployments after CDK bootstrap is complete.
+
+**When NOT to use:** CDK bootstrap requires admin access - use your main AWS account for bootstrap.
+
+Create an IAM user with limited permissions for CI/CD:
 
 #### Step 1: Create IAM Policy
 
@@ -192,22 +196,34 @@ aws cloudformation describe-stacks --stack-name CDKToolkit --region us-east-1
 
 ### Step 2: Bootstrap CDK (First Time Only)
 
-**Option A: Use Admin Credentials (Recommended)**
+**📚 Official AWS Documentation:**
+- [CDK Bootstrap Guide](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html)
+- [CDK Bootstrap Environment](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html)
+- [CDK Permissions Guide](https://docs.aws.amazon.com/cdk/v2/guide/permissions.html)
+
+**Use Admin Credentials (Required)**
+
+According to [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html), CDK bootstrap requires extensive permissions including:
+```
+CloudFormation: *, ECR: *, SSM: *, S3: *, IAM: *
+```
+
+**This effectively requires admin access.** Use your main AWS account credentials:
+
 ```bash
-# Use your main AWS admin account temporarily
-aws configure  # Enter your admin credentials
+# Configure with your admin AWS credentials
+aws configure
+# Enter: Access Key ID, Secret Key, Region (us-east-1), Output format (json)
+
+# Bootstrap your account
 cdk bootstrap aws://YOUR-ACCOUNT-ID/us-east-1
 ```
 
-**Option B: Use Limited IAM User (Advanced)**
-Follow the "Initial AWS Setup" section above to create limited IAM user, then:
-```bash
-source .env
-aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
-aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
-aws configure set region "${AWS_REGION:-us-east-1}"
-cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION
-```
+**What CDK Bootstrap Creates:**
+- S3 bucket for CDK assets
+- ECR repository for Docker images  
+- IAM roles for deployments (with AdministratorAccess by default)
+- CloudFormation execution role
 
 ### Step 3: Deploy Infrastructure
 
@@ -270,13 +286,15 @@ The GitHub Actions workflow automatically:
 ### Required GitHub Secrets
 
 Configure these secrets in your GitHub repository settings:
-- `AWS_ACCESS_KEY_ID` - Your AWS access key
-- `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+- `AWS_ACCESS_KEY_ID` - Limited IAM user access key (see IAM Setup section)
+- `AWS_SECRET_ACCESS_KEY` - Limited IAM user secret key  
 - `AWS_REGION` - AWS region (default: us-east-1)
 - `CODECOV_TOKEN` - (Optional) Token for Codecov integration
 - `EC2_HOST` - EC2 instance IP/hostname for deployment
 - `EC2_USER` - EC2 username (usually ec2-user)
 - `EC2_SSH_KEY` - Private SSH key for EC2 access
+
+**Note:** For CI/CD, use the limited IAM user created in the "IAM Setup for CI/CD" section above.
 
 ## Environment Variables
 
