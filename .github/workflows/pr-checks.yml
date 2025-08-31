@@ -38,7 +38,7 @@ jobs:
       run: flake8 app/
     
     - name: Type checking with mypy
-      run: mypy app/ --ignore-missing-imports
+      run: mypy app/
     
     - name: Security audit with bandit
       run: bandit -r app/ -f json -o bandit-report.json && cat bandit-report.json

@@ -1,11 +1,10 @@
 from functools import lru_cache
 
-from pydantic import ConfigDict
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     app_name: str = "FastAPI AWS App"
     environment: str = "development"
@@ -19,5 +18,5 @@ class Settings(BaseSettings):
 
 
 @lru_cache()
-def get_settings():
+def get_settings() -> Settings:
     return Settings()
