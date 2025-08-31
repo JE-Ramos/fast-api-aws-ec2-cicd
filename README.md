@@ -37,6 +37,38 @@ A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline u
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker (optional, for containerized deployment)
 
+### Required AWS IAM Permissions
+
+The minimum IAM permissions required to deploy this infrastructure are documented in `infra/iam-policy.json`. You can create an IAM user with these permissions:
+
+1. Create a new IAM policy:
+```bash
+aws iam create-policy \
+  --policy-name FastAPIEC2DeployPolicy \
+  --policy-document file://infra/iam-policy.json
+```
+
+2. Create an IAM user and attach the policy:
+```bash
+aws iam create-user --user-name fastapi-deploy
+aws iam attach-user-policy \
+  --user-name fastapi-deploy \
+  --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/FastAPIEC2DeployPolicy
+```
+
+3. Create access keys for the user:
+```bash
+aws iam create-access-key --user-name fastapi-deploy
+```
+
+The policy includes permissions for:
+- **CloudFormation**: Stack management for CDK
+- **EC2**: VPC, subnets, security groups, instances
+- **IAM**: Roles and instance profiles for EC2
+- **S3**: CDK asset storage
+- **SSM**: Parameter store for CDK
+- **ECR**: Container registry for CDK assets
+
 ## Setup
 
 ### 1. Clone the repository
