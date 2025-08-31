@@ -16,9 +16,7 @@
         "cloudformation:CreateChangeSet",
         "cloudformation:DescribeChangeSet",
         "cloudformation:ExecuteChangeSet",
-        "cloudformation:DeleteChangeSet",
-        "ssm:GetParameter",
-        "ssm:PutParameter"
+        "cloudformation:DeleteChangeSet"
       ],
       "Resource": "*"
     },
@@ -138,9 +136,24 @@
         "ecr:DeleteRepository",
         "ecr:DescribeRepositories",
         "ecr:PutLifecyclePolicy",
-        "ecr:GetAuthorizationToken"
+        "ecr:GetAuthorizationToken",
+        "ecr:SetRepositoryPolicy",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DeleteRepositoryPolicy"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "SSMParameterStore",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DeleteParameter",
+        "ssm:DescribeParameters",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/cdk-bootstrap/*"
     }
   ]
 }
