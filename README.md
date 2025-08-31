@@ -155,77 +155,102 @@ Access the API documentation at:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Infrastructure Deployment
+## Deployment Options
+
+Choose between **local development** or **AWS infrastructure deployment**:
+
+## 🏠 Local Development (Recommended for testing)
+
+### Quick Start
+```bash
+./scripts/setup_local.sh
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+```
+
+Access at: http://localhost:8000/docs
+
+## ☁️ AWS Infrastructure Deployment
+
+**Reference:** [AWS CDK Bootstrapping Guide](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html)
 
 ### Prerequisites Check
-Before deploying, ensure you have:
-- ✅ Created IAM user with deployment policy (see Initial AWS Setup above)
-- ✅ Added AWS credentials to `.env` file
-- ✅ Installed AWS CDK: `npm install -g aws-cdk`
+- ✅ AWS Account with admin access (for bootstrap) or existing CDK bootstrap
+- ✅ AWS CDK CLI: `npm install -g aws-cdk`
+- ✅ Node.js and Python 3.9+
 
-### Deploy Infrastructure with CDK
+### Step 1: Check if CDK is Already Bootstrapped
 
-1. **Configure AWS credentials from .env**:
+```bash
+# Check if your AWS account is already bootstrapped
+aws cloudformation describe-stacks --stack-name CDKToolkit --region us-east-1
+```
+
+**If you get a stack description:** ✅ Your account is already bootstrapped! Skip to Step 3.
+
+**If you get "Stack does not exist":** Continue to Step 2.
+
+### Step 2: Bootstrap CDK (First Time Only)
+
+**Option A: Use Admin Credentials (Recommended)**
+```bash
+# Use your main AWS admin account temporarily
+aws configure  # Enter your admin credentials
+cdk bootstrap aws://YOUR-ACCOUNT-ID/us-east-1
+```
+
+**Option B: Use Limited IAM User (Advanced)**
+Follow the "Initial AWS Setup" section above to create limited IAM user, then:
 ```bash
 source .env
 aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
 aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
 aws configure set region "${AWS_REGION:-us-east-1}"
-```
-
-2. **Verify credentials are working**:
-```bash
-aws sts get-caller-identity
-# Should return your account details
-```
-
-3. **Install CDK dependencies**:
-```bash
-cd infra
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-4. **Bootstrap CDK** (first time only):
-```bash
 cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION
 ```
 
-5. **Preview the deployment** (optional):
+### Step 3: Deploy Infrastructure
+
 ```bash
+# 1. Install CDK dependencies
+cd infra
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Preview deployment (optional)
 cdk diff
-```
 
-6. **Deploy the infrastructure**:
-```bash
+# 3. Deploy infrastructure
 cdk deploy FastAPIEC2Stack
+
+# 4. Save the EC2 IP from the output
 ```
 
-7. **Note the outputs**:
-   - The deployment will output the EC2 instance's public IP
-   - Save this IP for application deployment
+### Step 4: Deploy Application to EC2
 
-### Destroy Infrastructure (when done)
-To avoid AWS charges, destroy the infrastructure when not in use:
+1. **Update repository URL** in `infra/stacks/ec2_stack.py` (line ~41):
+   ```python
+   "git clone https://github.com/JE-Ramos/fast-api-aws-ec2-cicd.git app",
+   ```
+
+2. **The application will auto-deploy** via the user data script when the EC2 instance starts
+
+3. **Access your app** at: `http://YOUR-EC2-IP:8000`
+
+### Cleanup (Important!)
 ```bash
 cd infra
-cdk destroy FastAPIEC2Stack
+cdk destroy FastAPIEC2Stack  # Avoid AWS charges
 ```
 
-### Application Deployment to EC2
+## 🤔 Already Bootstrapped Account?
 
-After infrastructure is deployed, deploy the application:
+According to [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html):
 
-1. **Update the GitHub repository URL** in `infra/stacks/ec2_stack.py`
-2. **SSH into your EC2 instance** (replace with your IP):
-```bash
-ssh -i your-key.pem ec2-user@YOUR_EC2_IP
-```
-3. **Run the setup script**:
-```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/fast-api-aws-ec2-cicd/main/scripts/setup_ec2.sh | bash
-```
+> "It's safe to re-bootstrap an environment. If an environment has already been bootstrapped, the bootstrap stack will be upgraded if necessary. Otherwise, nothing will happen."
+
+**If your account is already bootstrapped:** Skip directly to Step 3 and deploy your infrastructure!
 
 ## API Endpoints
 
