@@ -8,7 +8,7 @@ def test_read_root():
     response = client.get("/")
     assert response.status_code == 200
     assert "message" in response.json()
-    assert response.json()["message"] == "Welcome to FastAPI AWS App"
+    assert response.json()["message"] == "Welcome to FastAPI AWS App with PR Checks"
 
 
 def test_health_check():
