@@ -1,10 +1,10 @@
-name: Deploy to AWS EC2
+name: FastAPI SaaS CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   test:
@@ -79,10 +79,11 @@ jobs:
         flake8 app --count --select=E9,F63,F7,F82 --show-source --statistics
         flake8 app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-  deploy:
+  deploy-staging:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
     
     steps:
     - uses: actions/checkout@v4
@@ -113,30 +114,63 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
     
-    - name: CDK Synth
+    - name: CDK Synth Staging
       run: |
         cd infra
-        cdk synth
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk synth FastAPIEC2Stack-Staging
     
-    - name: CDK Deploy
+    - name: Deploy to Staging
       run: |
         cd infra
-        cdk deploy FastAPIEC2Stack --require-approval never
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk deploy FastAPIEC2Stack-Staging --require-approval never
     
-    - name: Deploy to EC2
-      env:
-        EC2_HOST: ${{ secrets.EC2_HOST }}
-        EC2_USER: ${{ secrets.EC2_USER }}
-        EC2_KEY: ${{ secrets.EC2_SSH_KEY }}
+  deploy-production:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: 
+      name: production
+      url: https://your-domain.com
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install AWS CDK
+      run: npm install -g aws-cdk
+    
+    - name: Install CDK dependencies
       run: |
-        echo "$EC2_KEY" > ec2_key.pem
-        chmod 600 ec2_key.pem
-        
-        ssh -o StrictHostKeyChecking=no -i ec2_key.pem $EC2_USER@$EC2_HOST << 'EOF'
-          cd /home/ec2-user/app
-          git pull origin main
-          pip3 install -r app/requirements.txt
-          sudo systemctl restart fastapi
-        EOF
-        
-        rm -f ec2_key.pem
+        cd infra
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    
+    - name: CDK Synth Production
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk synth FastAPIEC2Stack-Production
+    
+    - name: Deploy to Production
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk deploy FastAPIEC2Stack-Production --require-approval never

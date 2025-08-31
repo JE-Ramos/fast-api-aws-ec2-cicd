@@ -5,6 +5,95 @@
 
 A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline using AWS CDK.
 
+## CI/CD Pipeline Architecture
+
+```mermaid
+graph TD
+    %% Developer Workflow
+    DEV[👨‍💻 Developer] -->|Feature Branch| FEATURE[feature/new-feature]
+    FEATURE -->|Pull Request| DEVELOP[🔄 develop branch]
+    DEVELOP -->|Release| MAIN[🚀 main branch]
+    
+    %% CI/CD Triggers
+    FEATURE -->|Push| TEST1[🧪 Run Tests]
+    DEVELOP -->|Merge| CICD_STAGING[📦 CI/CD Staging Pipeline]
+    MAIN -->|Push/Release| CICD_PROD[📦 CI/CD Production Pipeline]
+    
+    %% Staging Pipeline
+    CICD_STAGING --> TEST2[🧪 Run Tests]
+    TEST2 -->|✅ Pass| BUILD_STAGING[🔨 Build Application]
+    BUILD_STAGING --> ARTIFACTS_STAGING[📁 Store Artifacts in S3]
+    ARTIFACTS_STAGING --> DEPLOY_STAGING[🚀 Deploy to Staging EC2]
+    
+    %% Production Pipeline (with approval)
+    CICD_PROD --> TEST3[🧪 Run Tests]
+    TEST3 -->|✅ Pass| BUILD_PROD[🔨 Build Application]
+    BUILD_PROD --> ARTIFACTS_PROD[📁 Store Artifacts in S3]
+    ARTIFACTS_PROD --> APPROVAL[⏸️ Manual Approval Required]
+    APPROVAL -->|✅ Approved| DEPLOY_PROD[🚀 Deploy to Production EC2]
+    
+    %% Infrastructure Components
+    subgraph AWS_INFRA[🏗️ AWS Infrastructure]
+        ALB[⚖️ Application Load Balancer]
+        
+        subgraph STAGING_ENV[🧪 Staging Environment]
+            EC2_STAGING[🖥️ EC2 Instance<br/>Auto Scaling Group<br/>Min: 1, Max: 2]
+            SECRETS_STAGING[🔐 Secrets Manager<br/>Staging Secrets]
+        end
+        
+        subgraph PROD_ENV[🏭 Production Environment]
+            EC2_PROD[🖥️ EC2 Instance<br/>Auto Scaling Group<br/>Min: 1, Max: 2]
+            SECRETS_PROD[🔐 Secrets Manager<br/>Production Secrets]
+        end
+        
+        S3_BUCKET[🪣 S3 Bucket<br/>Static Assets & Artifacts]
+        VPC[🌐 VPC<br/>Public & Private Subnets]
+    end
+    
+    %% Deployment Connections
+    DEPLOY_STAGING --> EC2_STAGING
+    DEPLOY_PROD --> EC2_PROD
+    
+    %% Load Balancer Routing
+    ALB -->|staging.domain.com| EC2_STAGING
+    ALB -->|domain.com| EC2_PROD
+    
+    %% Rollback Capabilities
+    subgraph ROLLBACK[🔄 Rollback Options]
+        ROLLBACK_ASG[Auto Scaling Group<br/>Rolling Update]
+        ROLLBACK_CODE[Git Revert<br/>Previous Commit]
+        ROLLBACK_INFRA[CloudFormation<br/>Stack Rollback]
+    end
+    
+    EC2_STAGING -.->|If Deployment Fails| ROLLBACK_ASG
+    EC2_PROD -.->|If Deployment Fails| ROLLBACK_ASG
+    DEPLOY_STAGING -.->|Code Issues| ROLLBACK_CODE
+    DEPLOY_PROD -.->|Code Issues| ROLLBACK_CODE
+    
+    %% External Access
+    USERS[🌍 Users] --> ALB
+    
+    %% Styling
+    classDef staging fill:#e1f5fe
+    classDef production fill:#fff3e0
+    classDef cicd fill:#f3e5f5
+    classDef aws fill:#fff8e1
+    classDef rollback fill:#ffebee
+    
+    class STAGING_ENV,EC2_STAGING,SECRETS_STAGING staging
+    class PROD_ENV,EC2_PROD,SECRETS_PROD production
+    class CICD_STAGING,CICD_PROD,TEST1,TEST2,TEST3,BUILD_STAGING,BUILD_PROD cicd
+    class AWS_INFRA,ALB,S3_BUCKET,VPC aws
+    class ROLLBACK,ROLLBACK_ASG,ROLLBACK_CODE,ROLLBACK_INFRA rollback
+```
+
+### Pipeline Flow Summary
+
+1. **Feature Development** → Tests run on every push
+2. **Staging Deployment** → Automatic on `develop` branch merge
+3. **Production Deployment** → Manual approval required from `main` branch
+4. **Rollback** → Auto Scaling Group rolling updates ensure zero-downtime recovery
+
 ## Project Structure
 
 ```
