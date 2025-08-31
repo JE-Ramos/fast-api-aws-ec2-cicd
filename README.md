@@ -37,31 +37,58 @@ A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline u
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker (optional, for containerized deployment)
 
-### Required AWS IAM Permissions
+### Initial AWS Setup (One-Time Configuration)
 
-The minimum IAM permissions required to deploy this infrastructure are documented in `infra/iam-policy.json`. You can create an IAM user with these permissions:
+Before deploying the infrastructure, you need to create an IAM user with the minimum required permissions. Follow these steps using the AWS Console:
 
-1. Create a new IAM policy:
-```bash
-aws iam create-policy \
-  --policy-name FastAPIEC2DeployPolicy \
-  --policy-document file://infra/iam-policy.json
-```
+#### Step 1: Create IAM Policy
 
-2. Create an IAM user and attach the policy:
-```bash
-aws iam create-user --user-name fastapi-deploy
-aws iam attach-user-policy \
-  --user-name fastapi-deploy \
-  --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/FastAPIEC2DeployPolicy
-```
+1. **Login to AWS Console** at https://console.aws.amazon.com/
+2. Navigate to **IAM** → **Policies** → **Create policy**
+3. Click on **JSON** tab
+4. Copy and paste the contents from `infra/iam-policy.json`
+5. Click **Next: Tags** (optional: add tags)
+6. Click **Next: Review**
+7. Name the policy: `FastAPIEC2DeployPolicy`
+8. Add description: "Minimum permissions for FastAPI EC2 CDK deployment"
+9. Click **Create policy**
 
-3. Create access keys for the user:
-```bash
-aws iam create-access-key --user-name fastapi-deploy
-```
+#### Step 2: Create IAM User
 
-The policy includes permissions for:
+1. Navigate to **IAM** → **Users** → **Add users**
+2. User name: `fastapi-deploy`
+3. Select **Access key - Programmatic access**
+4. Click **Next: Permissions**
+5. Select **Attach existing policies directly**
+6. Search for and select `FastAPIEC2DeployPolicy`
+7. Click **Next: Tags** (optional: add tags)
+8. Click **Next: Review**
+9. Click **Create user**
+
+#### Step 3: Save Credentials
+
+1. **Download .csv** or copy the credentials shown:
+   - Access key ID
+   - Secret access key (⚠️ This is shown only once!)
+2. Add these credentials to your `.env` file:
+   ```bash
+   AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+   AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+   AWS_REGION=us-east-1
+   CDK_DEFAULT_ACCOUNT=123456789012  # Your AWS Account ID
+   CDK_DEFAULT_REGION=us-east-1
+   ```
+
+#### Step 4: Find Your AWS Account ID
+
+1. In AWS Console, click your username in the top-right
+2. Click **Account** or look at the dropdown
+3. Copy your 12-digit Account ID
+4. Add it to `.env` as `CDK_DEFAULT_ACCOUNT`
+
+### Minimum IAM Permissions
+
+The policy in `infra/iam-policy.json` includes permissions for:
 - **CloudFormation**: Stack management for CDK
 - **EC2**: VPC, subnets, security groups, instances
 - **IAM**: Roles and instance profiles for EC2
@@ -113,29 +140,77 @@ Access the API documentation at:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Deployment
+## Infrastructure Deployment
 
-### Deploy with AWS CDK
+### Prerequisites Check
+Before deploying, ensure you have:
+- ✅ Created IAM user with deployment policy (see Initial AWS Setup above)
+- ✅ Added AWS credentials to `.env` file
+- ✅ Installed AWS CDK: `npm install -g aws-cdk`
 
-1. Bootstrap CDK (first time only):
+### Deploy Infrastructure with CDK
+
+1. **Configure AWS credentials from .env**:
 ```bash
-cd infra
-cdk bootstrap
+source .env
+aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+aws configure set region "${AWS_REGION:-us-east-1}"
 ```
 
-2. Deploy the stack:
+2. **Verify credentials are working**:
+```bash
+aws sts get-caller-identity
+# Should return your account details
+```
+
+3. **Install CDK dependencies**:
+```bash
+cd infra
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+4. **Bootstrap CDK** (first time only):
+```bash
+cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION
+```
+
+5. **Preview the deployment** (optional):
+```bash
+cdk diff
+```
+
+6. **Deploy the infrastructure**:
 ```bash
 cdk deploy FastAPIEC2Stack
 ```
 
-3. The deployment will output the EC2 instance's public IP address.
+7. **Note the outputs**:
+   - The deployment will output the EC2 instance's public IP
+   - Save this IP for application deployment
 
-### Manual EC2 Deployment
+### Destroy Infrastructure (when done)
+To avoid AWS charges, destroy the infrastructure when not in use:
+```bash
+cd infra
+cdk destroy FastAPIEC2Stack
+```
 
-1. SSH into your EC2 instance
-2. Clone your repository
-3. Install dependencies
-4. Run the application with systemd or supervisor
+### Application Deployment to EC2
+
+After infrastructure is deployed, deploy the application:
+
+1. **Update the GitHub repository URL** in `infra/stacks/ec2_stack.py`
+2. **SSH into your EC2 instance** (replace with your IP):
+```bash
+ssh -i your-key.pem ec2-user@YOUR_EC2_IP
+```
+3. **Run the setup script**:
+```bash
+curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/fast-api-aws-ec2-cicd/main/scripts/setup_ec2.sh | bash
+```
 
 ## API Endpoints
 
