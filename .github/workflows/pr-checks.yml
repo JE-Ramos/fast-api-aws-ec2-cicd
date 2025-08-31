@@ -82,6 +82,7 @@ jobs:
           --cov-branch \
           --cov-report=term-missing:skip-covered \
           --cov-report=xml:unit-coverage.xml \
+          --html=unit-report.html --self-contained-html \
           --junitxml=unit-results.xml \
           -n auto
     
@@ -93,6 +94,16 @@ jobs:
         path: |
           unit-coverage.xml
           unit-results.xml
+          unit-report.html
+    
+    - name: Publish unit test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Unit Test Results
+        path: unit-results.xml
+        reporter: java-junit
+        fail-on-error: false
 
   integration-tests:
     name: Integration Tests
@@ -119,6 +130,7 @@ jobs:
           --cov-branch \
           --cov-report=term-missing:skip-covered \
           --cov-report=xml:integration-coverage.xml \
+          --html=integration-report.html --self-contained-html \
           --junitxml=integration-results.xml
     
     - name: Upload integration test results
@@ -129,6 +141,16 @@ jobs:
         path: |
           integration-coverage.xml
           integration-results.xml
+          integration-report.html
+    
+    - name: Publish integration test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Integration Test Results
+        path: integration-results.xml
+        reporter: java-junit
+        fail-on-error: false
 
   build-validation:
     name: Build Validation
