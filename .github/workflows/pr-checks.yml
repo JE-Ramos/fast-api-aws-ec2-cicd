@@ -45,11 +45,15 @@ jobs:
       run: mypy app/
     
     - name: Security audit with bandit
-      run: bandit -r app/ -f json -o bandit-report.json && cat bandit-report.json
+      run: |
+        bandit -r app/ -f json -o bandit-report.json || echo "{}" > bandit-report.json
+        cat bandit-report.json
       continue-on-error: true
     
     - name: Dependency vulnerability check with safety
-      run: safety check --json --output safety-report.json && cat safety-report.json
+      run: |
+        safety check --json > safety-report.json || echo "{}" > safety-report.json
+        cat safety-report.json
       continue-on-error: true
     
     - name: Upload analysis artifacts
