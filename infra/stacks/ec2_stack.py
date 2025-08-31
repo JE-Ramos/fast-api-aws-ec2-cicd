@@ -326,7 +326,7 @@ class EC2Stack(Stack):
             self, "FastAPILaunchTemplate",
             instance_type=ec2.InstanceType(self.instance_type),
             machine_image=ec2.AmazonLinuxImage(
-                generation=ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
+                generation=ec2.AmazonLinuxGeneration.AMAZON_LINUX_2023
             ),
             security_group=instance_security_group,
             role=role,
@@ -348,7 +348,7 @@ class EC2Stack(Stack):
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS  # Instances in private subnets
             ),
-            health_check=autoscaling.HealthCheck.elb(grace=300),  # Use load balancer health checks
+            health_check=autoscaling.HealthCheck.elb(grace=Duration.seconds(300)),  # Use load balancer health checks
             update_policy=autoscaling.UpdatePolicy.rolling_update(
                 min_instances_in_service=1,  # Ensure zero-downtime deployments
                 max_batch_size=1,
