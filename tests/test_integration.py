@@ -49,7 +49,8 @@ class TestAPIIntegration:
             }
         )
         assert "access-control-allow-origin" in response.headers
-        assert response.headers["access-control-allow-origin"] == "*"
+        # CORS reflects the origin when allow_credentials=True
+        assert response.headers["access-control-allow-origin"] == "http://example.com"
     
     def test_api_versioning(self):
         response = client.get("/api/v1/items")
