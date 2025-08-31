@@ -55,22 +55,37 @@ Before deploying the infrastructure, you need to create an IAM user with the min
 
 #### Step 2: Create IAM User
 
-1. Navigate to **IAM** → **Users** → **Add users**
-2. User name: `fastapi-deploy`
-3. Select **Access key - Programmatic access**
-4. Click **Next: Permissions**
-5. Select **Attach existing policies directly**
-6. Search for and select `FastAPIEC2DeployPolicy`
-7. Click **Next: Tags** (optional: add tags)
-8. Click **Next: Review**
-9. Click **Create user**
+1. Navigate to **IAM** → **Users** → **Create user**
+2. **Step 1 - Specify user details:**
+   - User name: `fastapi-deploy`
+   - Click **Next**
+3. **Step 2 - Set permissions:**
+   - Select **Attach policies directly**
+   - Search for `FastAPIEC2DeployPolicy` in the search box
+   - Check the checkbox next to `FastAPIEC2DeployPolicy`
+   - Click **Next**
+4. **Step 3 - Review and create:**
+   - Review the settings
+   - Click **Create user**
 
-#### Step 3: Save Credentials
+#### Step 3: Create Access Keys
 
-1. **Download .csv** or copy the credentials shown:
-   - Access key ID
-   - Secret access key (⚠️ This is shown only once!)
-2. Add these credentials to your `.env` file:
+1. After creating the user, click on the username `fastapi-deploy`
+2. Go to **Security credentials** tab
+3. Scroll to **Access keys** section
+4. Click **Create access key**
+5. **Step 1 - Access key best practices:**
+   - Select **Command Line Interface (CLI)**
+   - Check the confirmation checkbox
+   - Click **Next**
+6. **Step 2 - Set description tag** (optional):
+   - Add description: "CDK deployment key"
+   - Click **Create access key**
+7. **Step 3 - Retrieve access keys:**
+   - Copy **Access key** and **Secret access key**
+   - ⚠️ **Important**: Save these credentials immediately! The secret key won't be shown again
+   - Optionally download the .csv file for backup
+8. Add these credentials to your `.env` file:
    ```bash
    AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
    AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
