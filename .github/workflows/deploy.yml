@@ -6,95 +6,17 @@ on:
 
 jobs:
   deploy-staging:
-    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/develop'
-    environment: staging
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-    
-    - name: Install AWS CDK
-      run: npm install -g aws-cdk
-    
-    - name: Install CDK dependencies
-      run: |
-        cd infra
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-    
-    - name: CDK Synth Staging
-      run: |
-        cd infra
-        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
-        cdk synth FastAPIEC2Stack-Staging
-    
-    - name: Deploy to Staging
-      run: |
-        cd infra
-        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
-        cdk deploy FastAPIEC2Stack-Staging --require-approval never
+    uses: ./.github/workflows/deploy-reusable.yml
+    with:
+      stack-name: FastAPIEC2Stack-Staging
+      environment: staging
+    secrets: inherit
     
   deploy-production:
-    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    environment: 
-      name: production
-      url: https://your-domain.com
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-    
-    - name: Install AWS CDK
-      run: npm install -g aws-cdk
-    
-    - name: Install CDK dependencies
-      run: |
-        cd infra
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-    
-    - name: CDK Synth Production
-      run: |
-        cd infra
-        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
-        cdk synth FastAPIEC2Stack-Production
-    
-    - name: Deploy to Production
-      run: |
-        cd infra
-        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
-        cdk deploy FastAPIEC2Stack-Production --require-approval never
+    uses: ./.github/workflows/deploy-reusable.yml
+    with:
+      stack-name: FastAPIEC2Stack-Production
+      environment: production
+    secrets: inherit

@@ -1,0 +1,65 @@
+name: Reusable Deploy Workflow
+
+on:
+  workflow_call:
+    inputs:
+      stack-name:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.11'
+      node-version:
+        required: false
+        type: string
+        default: '20'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    
+    - name: Install AWS CDK
+      run: npm install -g aws-cdk
+    
+    - name: Install CDK dependencies
+      run: |
+        cd infra
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    
+    - name: CDK Synth
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk synth ${{ inputs.stack-name }}
+    
+    - name: Deploy to ${{ inputs.environment }}
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        cdk deploy ${{ inputs.stack-name }} --require-approval never
