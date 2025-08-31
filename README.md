@@ -1,5 +1,8 @@
 # FastAPI AWS EC2 CI/CD Project
 
+[![codecov](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd/branch/main/graph/badge.svg)](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd)
+[![Tests](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml/badge.svg)](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml)
+
 A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline using AWS CDK.
 
 ## Project Structure
@@ -126,10 +129,39 @@ See `.env.example` for all required environment variables:
 
 ## Testing
 
+### Running Tests Locally
+
 ```bash
-cd app
-pytest tests/
+# Run tests with coverage report
+pytest
+
+# Run tests with specific verbosity
+pytest -v
+
+# Run only unit tests
+pytest -m unit
+
+# Run tests and generate HTML coverage report
+pytest --cov-report=html
+# Open htmlcov/index.html in browser to view detailed coverage
+
+# Run tests without coverage (faster)
+pytest --no-cov
 ```
+
+### Coverage Requirements
+
+- Minimum coverage: 80%
+- Coverage includes branch coverage
+- Reports generated: Terminal, HTML, XML, JSON
+
+### Coverage Reports
+
+After running tests, coverage reports are available in:
+- **Terminal**: Displayed immediately after test run
+- **HTML**: `htmlcov/index.html` - Interactive HTML report
+- **XML**: `coverage.xml` - For CI/CD integration
+- **JSON**: `coverage.json` - Machine-readable format
 
 ## Security Considerations
 

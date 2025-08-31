@@ -9,6 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: write
+      pull-requests: write
     
     steps:
     - uses: actions/checkout@v3
@@ -24,10 +28,48 @@ jobs:
         pip install -r app/requirements.txt
         pip install pytest pytest-cov
     
-    - name: Run tests
+    - name: Run tests with coverage
       run: |
-        cd app
-        python -m pytest ../tests/ -v --cov=./ --cov-report=xml
+        pytest tests/ \
+          --cov=app \
+          --cov-branch \
+          --cov-report=term-missing:skip-covered \
+          --cov-report=html:htmlcov \
+          --cov-report=xml:coverage.xml \
+          --cov-report=json:coverage.json \
+          --junitxml=pytest.xml | tee pytest-coverage.txt
+    
+    - name: Upload coverage to Codecov
+      if: github.event_name == 'push' || github.event_name == 'pull_request'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+    
+    - name: Pytest Coverage Comment
+      if: github.event_name == 'pull_request'
+      uses: MishaKav/pytest-coverage-comment@main
+      with:
+        pytest-coverage-path: ./pytest-coverage.txt
+        junitxml-path: ./pytest.xml
+        title: Coverage Report
+        badge-title: Coverage
+        hide-badge: false
+        hide-report: false
+        create-new-comment: false
+        hide-comment: false
+    
+    - name: Upload coverage artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: |
+          htmlcov/
+          coverage.xml
+          coverage.json
+          pytest.xml
     
     - name: Lint with flake8
       run: |
@@ -63,11 +105,11 @@ jobs:
         pip install -r requirements.txt
     
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
     
     - name: CDK Synth
       run: |

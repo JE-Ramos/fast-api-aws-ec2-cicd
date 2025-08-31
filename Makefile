@@ -18,7 +18,13 @@ run:
 	cd app && uvicorn main:app --reload --port 8000
 
 test:
-	pytest tests/ -v --cov=app --cov-report=term-missing
+	pytest
+
+test-verbose:
+	pytest -v
+
+test-coverage:
+	pytest --cov-report=html && open htmlcov/index.html
 
 lint:
 	flake8 app --max-line-length=127
