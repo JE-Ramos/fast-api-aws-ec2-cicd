@@ -15,10 +15,10 @@ jobs:
       pull-requests: write
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
@@ -41,12 +41,13 @@ jobs:
     
     - name: Upload coverage to Codecov
       if: github.event_name == 'push' || github.event_name == 'pull_request'
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
     
     - name: Pytest Coverage Comment
       if: github.event_name == 'pull_request'
@@ -62,7 +63,7 @@ jobs:
         hide-comment: false
     
     - name: Upload coverage artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-report
         path: |
@@ -70,6 +71,7 @@ jobs:
           coverage.xml
           coverage.json
           pytest.xml
+        retention-days: 30
     
     - name: Lint with flake8
       run: |
@@ -83,17 +85,17 @@ jobs:
     if: github.ref == 'refs/heads/main'
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
     - name: Set up Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
     
     - name: Install AWS CDK
       run: npm install -g aws-cdk

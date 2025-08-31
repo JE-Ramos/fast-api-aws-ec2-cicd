@@ -120,6 +120,17 @@ The GitHub Actions workflow automatically:
 2. Builds and validates the application
 3. Deploys to AWS EC2 using CDK
 
+### Required GitHub Secrets
+
+Configure these secrets in your GitHub repository settings:
+- `AWS_ACCESS_KEY_ID` - Your AWS access key
+- `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+- `AWS_REGION` - AWS region (default: us-east-1)
+- `CODECOV_TOKEN` - (Optional) Token for Codecov integration
+- `EC2_HOST` - EC2 instance IP/hostname for deployment
+- `EC2_USER` - EC2 username (usually ec2-user)
+- `EC2_SSH_KEY` - Private SSH key for EC2 access
+
 ## Environment Variables
 
 See `.env.example` for all required environment variables:
