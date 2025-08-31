@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import get_settings
+
 from app.api import routes
+from app.config import get_settings
 
 settings = get_settings()
 
@@ -10,7 +11,7 @@ app = FastAPI(
     version="1.0.0",
     description="FastAPI application deployed on AWS EC2 with CI/CD",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 app.add_middleware(
@@ -25,14 +26,10 @@ app.include_router(routes.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
-async def root():
-    return {
-        "message": "Welcome to FastAPI AWS App",
-        "environment": settings.environment,
-        "version": "1.0.0"
-    }
+async def root() -> dict[str, str]:
+    return {"message": "Welcome to FastAPI AWS App with PR Checks", "environment": settings.environment, "version": "1.0.1"}
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict[str, str]:
     return {"status": "healthy"}
