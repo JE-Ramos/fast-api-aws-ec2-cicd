@@ -2,7 +2,7 @@ import os
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     jwt_secret: Optional[str] = Field(default=None, description="JWT signing secret")
     api_keys: Optional[str] = Field(default=None, description="External API keys")
     
-    @validator("use_secrets_manager", pre=True)
+    @field_validator("use_secrets_manager", mode="before")
+    @classmethod
     def check_ec2_environment(cls, v):
         """Auto-enable Secrets Manager when running on EC2."""
         # Check if running on EC2 by looking for instance metadata
