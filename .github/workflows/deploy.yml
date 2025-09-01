@@ -71,5 +71,41 @@ jobs:
                 --secret-string "{\"ec2_key_name\":\"fastapi-key\",\"ec2_host\":\"$EC2_HOST\",\"ec2_user\":\"ec2-user\",\"github_repo\":\"$REPOSITORY_URL\"}" \
                 2>/dev/null || echo "Could not update deployment secrets"
             fi
+            
+            # Export EC2_HOST for the next step
+            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+            echo "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}" >> $GITHUB_ENV
           fi
         fi
+    
+    - name: Comment Deployment URL on PR
+      if: github.event_name == 'push' && env.EC2_HOST != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const environment = process.env.ENVIRONMENT;
+          const ec2Host = process.env.EC2_HOST;
+          const deploymentUrl = `http://${ec2Host}:8000`;
+          
+          // Get the current branch
+          const branch = context.ref.replace('refs/heads/', '');
+          
+          // Find any open PRs from the current branch
+          const { data: pulls } = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            head: `${context.repo.owner}:${branch}`
+          });
+          
+          const commitSha = context.sha;
+          
+          for (const pull of pulls) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+              body: `## 🚀 Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
+            });
+          }
