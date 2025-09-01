@@ -37,6 +37,7 @@ class TestSecretsManager:
             sm = SecretsManager()
             assert sm.region_name == "us-east-1"
 
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_success(self, mock_boto_client):
         """Test successful secret retrieval."""
@@ -52,6 +53,7 @@ class TestSecretsManager:
         assert result == test_secret
         mock_client.get_secret_value.assert_called_once_with(SecretId="test-secret")
 
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_not_found(self, mock_boto_client):
         """Test secret not found error."""
@@ -66,6 +68,7 @@ class TestSecretsManager:
         with pytest.raises(ValueError, match="Secret test-secret not found"):
             sm.get_secret("test-secret")
 
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_access_denied(self, mock_boto_client):
         """Test access denied error."""
@@ -80,6 +83,7 @@ class TestSecretsManager:
         with pytest.raises(PermissionError, match="Access denied to secret test-secret"):
             sm.get_secret("test-secret")
 
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_binary_not_supported(self, mock_boto_client):
         """Test binary secrets are not supported."""
@@ -93,6 +97,22 @@ class TestSecretsManager:
         with pytest.raises(ValueError, match="Binary secret test-secret is not supported"):
             sm.get_secret("test-secret")
 
+    @pytest.mark.integration
+    @patch("boto3.client")
+    def test_get_secret_unknown_error(self, mock_boto_client):
+        """Test unknown ClientError is re-raised."""
+        mock_client = Mock()
+        mock_boto_client.return_value = mock_client
+
+        error = ClientError(error_response={"Error": {"Code": "UnknownError"}}, operation_name="GetSecretValue")
+        mock_client.get_secret_value.side_effect = error
+
+        sm = SecretsManager()
+
+        with pytest.raises(ClientError):
+            sm.get_secret("test-secret")
+
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_value_success(self, mock_boto_client):
         """Test getting specific value from secret."""
@@ -107,6 +127,7 @@ class TestSecretsManager:
 
         assert result == "value1"
 
+    @pytest.mark.integration
     @patch("boto3.client")
     def test_get_secret_value_with_default(self, mock_boto_client):
         """Test getting value with default fallback."""
@@ -139,6 +160,7 @@ class TestSecretsManager:
 class TestGlobalFunctions:
     """Test module-level convenience functions."""
 
+    @pytest.mark.integration
     @patch("app.secrets_manager.SecretsManager")
     def test_get_secrets_manager_singleton(self, mock_sm_class):
         """Test global secrets manager is singleton."""
@@ -158,12 +180,14 @@ class TestGlobalFunctions:
         assert result1 == result2
         mock_sm_class.assert_called_once()
 
+    @pytest.mark.integration
     @patch.dict(os.environ, {"JWT_SECRET": "env-jwt-secret"})
     def test_get_app_secret_from_env(self):
         """Test getting secret from environment variable first."""
         result = get_app_secret("jwt_secret", "default")
         assert result == "env-jwt-secret"
 
+    @pytest.mark.integration
     @patch.dict(os.environ, {}, clear=True)
     @patch("app.secrets_manager.get_secrets_manager")
     def test_get_app_secret_from_secrets_manager(self, mock_get_sm):
@@ -201,6 +225,7 @@ class TestGlobalFunctions:
 
         mock_sm.get_secret_value.assert_called_once_with("CustomAppSecrets", "jwt_secret", None)
 
+    @pytest.mark.integration
     @patch("app.secrets_manager.get_secrets_manager")
     def test_get_deployment_secret_success(self, mock_get_sm):
         """Test successful deployment secret retrieval."""
