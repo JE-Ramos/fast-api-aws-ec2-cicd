@@ -35,7 +35,8 @@ from aws_cdk import (
     CfnOutput,
     Tags,
     RemovalPolicy,
-    Duration
+    Duration,
+    SecretValue
 )
 from constructs import Construct
 
@@ -149,7 +150,20 @@ class EC2Stack(Stack):
             ]
         )
         
-        # Secrets Manager for Secure Credential Storage
+        # Deployment Secrets - Used by CDK and GitHub Actions
+        # Contains: EC2 key pair name, instance IDs, deployment configs
+        deployment_secrets = secretsmanager.Secret(
+            self, "FastAPIDeploymentSecrets",
+            description=f"Deployment secrets for FastAPI {self.environment_name} environment",
+            secret_object_value={
+                "ec2_key_name": SecretValue.unsafe_plain_text("fastapi-key"),  # Update in AWS Console
+                "ec2_host": SecretValue.unsafe_plain_text(""),  # Will be populated after deployment
+                "ec2_user": SecretValue.unsafe_plain_text("ec2-user"),
+                "github_repo": SecretValue.unsafe_plain_text("https://github.com/JE-Ramos/fast-api-aws-ec2-cicd.git")
+            }
+        )
+        
+        # Application Secrets - Runtime secrets for the FastAPI app
         # Why: Replaces plain-text secrets in config files with encrypted storage
         # How: Application retrieves secrets at runtime using IAM permissions
         # Existing account: Can integrate with existing secrets or create new ones
@@ -229,6 +243,7 @@ class EC2Stack(Stack):
         
         # Grant access to Secrets Manager for runtime secret retrieval
         app_secrets.grant_read(role)
+        deployment_secrets.grant_read(role)
         
         # Grant access to S3 bucket for static assets and artifacts
         assets_bucket.grant_read_write(role)
@@ -390,9 +405,15 @@ class EC2Stack(Stack):
         )
         
         CfnOutput(
-            self, "SecretsManagerArn", 
+            self, "AppSecretsArn", 
             value=app_secrets.secret_arn,
-            description="Secrets Manager ARN for application secrets"
+            description="Secrets Manager ARN for application runtime secrets"
+        )
+        
+        CfnOutput(
+            self, "DeploymentSecretsArn",
+            value=deployment_secrets.secret_arn,
+            description="Secrets Manager ARN for deployment configuration"
         )
         
         CfnOutput(

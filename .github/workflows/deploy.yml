@@ -44,4 +44,32 @@ jobs:
         export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
         STACK_NAME="FastAPIEC2Stack-${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}"
         cdk synth $STACK_NAME
-        cdk deploy $STACK_NAME --require-approval never
+        cdk deploy $STACK_NAME --require-approval never --outputs-file outputs.json
+        
+        # Update deployment secrets with EC2 instance info if available
+        INSTANCE_ID=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$INSTANCE_ID" ]; then
+          EC2_HOST=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text 2>/dev/null || echo "")
+          
+          # Update deployment secret if we have the EC2 host
+          if [ ! -z "$EC2_HOST" ]; then
+            DEPLOYMENT_SECRETS_ARN=$(aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --query "Stacks[0].Outputs[?OutputKey=='DeploymentSecretsArn'].OutputValue" \
+              --output text 2>/dev/null || echo "")
+            
+            if [ ! -z "$DEPLOYMENT_SECRETS_ARN" ]; then
+              aws secretsmanager update-secret \
+                --secret-id "$DEPLOYMENT_SECRETS_ARN" \
+                --secret-string "{\"ec2_key_name\":\"fastapi-key\",\"ec2_host\":\"$EC2_HOST\",\"ec2_user\":\"ec2-user\",\"github_repo\":\"$REPOSITORY_URL\"}" \
+                2>/dev/null || echo "Could not update deployment secrets"
+            fi
+          fi
+        fi
