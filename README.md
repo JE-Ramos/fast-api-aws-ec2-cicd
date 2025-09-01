@@ -19,56 +19,54 @@ graph TD
     DEVELOP -->|Merge| CICD_STAGING[📦 CI/CD Staging Pipeline]
     MAIN -->|Push/Release| CICD_PROD[📦 CI/CD Production Pipeline]
     
-    %% Staging Pipeline
-    CICD_STAGING --> TEST2[🧪 Run Tests]
-    TEST2 -->|✅ Pass| BUILD_STAGING[🔨 Build Application]
-    BUILD_STAGING --> ARTIFACTS_STAGING[📁 Store Artifacts in S3]
-    ARTIFACTS_STAGING --> DEPLOY_STAGING[🚀 Deploy to Staging EC2]
+    %% Secrets Management (New!)
+    subgraph SECRETS_CENTRAL[🔐 AWS Secrets Manager - Single Source of Truth]
+        APP_SECRETS[📱 Application Secrets<br/>DB passwords, JWT, API keys]
+        DEPLOY_SECRETS[🚀 Deployment Secrets<br/>EC2 host, SSH keys, GitHub repo]
+    end
     
-    %% Production Pipeline (with approval)
+    %% Updated Pipeline with Secrets Integration
+    CICD_STAGING --> TEST2[🧪 Run Tests]
+    TEST2 -->|✅ Pass| FETCH_SECRETS_STAGING[🔑 Fetch Deployment Secrets]
+    FETCH_SECRETS_STAGING --> DEPLOY_STAGING[🚀 Deploy to Staging EC2]
+    DEPLOY_STAGING -->|Update| DEPLOY_SECRETS
+    
     CICD_PROD --> TEST3[🧪 Run Tests]
-    TEST3 -->|✅ Pass| BUILD_PROD[🔨 Build Application]
-    BUILD_PROD --> ARTIFACTS_PROD[📁 Store Artifacts in S3]
-    ARTIFACTS_PROD --> APPROVAL[⏸️ Manual Approval Required]
-    APPROVAL -->|✅ Approved| DEPLOY_PROD[🚀 Deploy to Production EC2]
+    TEST3 -->|✅ Pass| FETCH_SECRETS_PROD[🔑 Fetch Deployment Secrets]
+    FETCH_SECRETS_PROD --> DEPLOY_PROD[🚀 Deploy to Production EC2]
+    DEPLOY_PROD -->|Update| DEPLOY_SECRETS
     
     %% Infrastructure Components
     subgraph AWS_INFRA[🏗️ AWS Infrastructure]
         ALB[⚖️ Application Load Balancer]
         
         subgraph STAGING_ENV[🧪 Staging Environment]
-            EC2_STAGING[🖥️ EC2 Instance<br/>Auto Scaling Group<br/>Min: 1, Max: 2]
-            SECRETS_STAGING[🔐 Secrets Manager<br/>Staging Secrets]
+            EC2_STAGING[🖥️ EC2 Instance<br/>Auto-loads secrets at runtime]
         end
         
         subgraph PROD_ENV[🏭 Production Environment]
-            EC2_PROD[🖥️ EC2 Instance<br/>Auto Scaling Group<br/>Min: 1, Max: 2]
-            SECRETS_PROD[🔐 Secrets Manager<br/>Production Secrets]
+            EC2_PROD[🖥️ EC2 Instance<br/>Auto-loads secrets at runtime]
         end
         
         S3_BUCKET[🪣 S3 Bucket<br/>Static Assets & Artifacts]
         VPC[🌐 VPC<br/>Public & Private Subnets]
     end
     
-    %% Deployment Connections
-    DEPLOY_STAGING --> EC2_STAGING
-    DEPLOY_PROD --> EC2_PROD
+    %% Secrets Flow to Applications
+    APP_SECRETS -.->|Runtime| EC2_STAGING
+    APP_SECRETS -.->|Runtime| EC2_PROD
+    
+    %% GitHub Actions - Simplified Secrets
+    subgraph GITHUB[📦 GitHub Actions]
+        GH_SECRETS[🔑 Only AWS Credentials<br/>No app/deployment secrets needed]
+    end
+    
+    CICD_STAGING --> GH_SECRETS
+    CICD_PROD --> GH_SECRETS
     
     %% Load Balancer Routing
     ALB -->|staging.domain.com| EC2_STAGING
     ALB -->|domain.com| EC2_PROD
-    
-    %% Rollback Capabilities
-    subgraph ROLLBACK[🔄 Rollback Options]
-        ROLLBACK_ASG[Auto Scaling Group<br/>Rolling Update]
-        ROLLBACK_CODE[Git Revert<br/>Previous Commit]
-        ROLLBACK_INFRA[CloudFormation<br/>Stack Rollback]
-    end
-    
-    EC2_STAGING -.->|If Deployment Fails| ROLLBACK_ASG
-    EC2_PROD -.->|If Deployment Fails| ROLLBACK_ASG
-    DEPLOY_STAGING -.->|Code Issues| ROLLBACK_CODE
-    DEPLOY_PROD -.->|Code Issues| ROLLBACK_CODE
     
     %% External Access
     USERS[🌍 Users] --> ALB
@@ -78,13 +76,15 @@ graph TD
     classDef production fill:#fff3e0
     classDef cicd fill:#f3e5f5
     classDef aws fill:#fff8e1
-    classDef rollback fill:#ffebee
+    classDef secrets fill:#e8f5e8
+    classDef github fill:#f0f0f0
     
-    class STAGING_ENV,EC2_STAGING,SECRETS_STAGING staging
-    class PROD_ENV,EC2_PROD,SECRETS_PROD production
-    class CICD_STAGING,CICD_PROD,TEST1,TEST2,TEST3,BUILD_STAGING,BUILD_PROD cicd
+    class STAGING_ENV,EC2_STAGING staging
+    class PROD_ENV,EC2_PROD production
+    class CICD_STAGING,CICD_PROD,TEST1,TEST2,TEST3,FETCH_SECRETS_STAGING,FETCH_SECRETS_PROD cicd
     class AWS_INFRA,ALB,S3_BUCKET,VPC aws
-    class ROLLBACK,ROLLBACK_ASG,ROLLBACK_CODE,ROLLBACK_INFRA rollback
+    class SECRETS_CENTRAL,APP_SECRETS,DEPLOY_SECRETS secrets
+    class GITHUB,GH_SECRETS github
 ```
 
 ### Pipeline Flow Summary
@@ -379,9 +379,9 @@ Configure these secrets in your GitHub repository settings:
 - `AWS_SECRET_ACCESS_KEY` - Limited IAM user secret key  
 - `AWS_REGION` - AWS region (default: us-east-1)
 - `CODECOV_TOKEN` - (Optional) Token for Codecov integration
-- `EC2_HOST` - EC2 instance IP/hostname for deployment
-- `EC2_USER` - EC2 username (usually ec2-user)
 - `EC2_SSH_KEY` - Private SSH key for EC2 access
+
+**🆕 Simplified with AWS Secrets Manager:** All deployment configuration (EC2 host, username, etc.) is now managed centrally in AWS Secrets Manager. GitHub Actions only needs AWS credentials to access these secrets.
 
 **Note:** For CI/CD, use the limited IAM user created in the "IAM Setup for CI/CD" section above.
 
