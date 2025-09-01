@@ -28,9 +28,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### AWS CDK Infrastructure
 - `cd infra && cdk synth` - Synthesize CDK templates
 - `cd infra && cdk diff` - Preview infrastructure changes
-- `cd infra && cdk deploy FastAPIEC2Stack` - Deploy infrastructure
-- `cd infra && cdk destroy FastAPIEC2Stack` - Destroy infrastructure
+- `cd infra && cdk deploy FastAPIEC2Stack-Staging` - Deploy staging infrastructure
+- `cd infra && cdk deploy FastAPIEC2Stack-Production` - Deploy production infrastructure
+- `cd infra && cdk destroy FastAPIEC2Stack-Staging` - Destroy staging infrastructure
 - `make cdk-synth`, `make cdk-deploy`, `make cdk-destroy` - CDK commands via Makefile
+
+### Docker and ECR
+- `docker build -t fastapi-app .` - Build Docker image locally
+- `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin` - Login to ECR
+- `docker push ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/fastapi-staging:latest` - Push to ECR
 
 ### Environment Setup
 - Bootstrap CDK (first time): `cdk bootstrap aws://ACCOUNT-ID/us-east-1`
@@ -55,12 +61,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Configuration loads from `.env` file with AWS credentials
 
 #### CDK Infrastructure (`infra/`)
-- **app.py** - CDK app entry point, loads environment from `.env`
+- **app.py** - CDK app entry point with staging/production environments
 - **stacks/ec2_stack.py** - Main infrastructure stack
-  - Creates VPC with public/private subnets
-  - EC2 instance with security groups (ports 22, 80, 8000)
-  - IAM role with SSM and CloudWatch permissions
-  - User data script for automatic app deployment
+  - Creates VPC with public/private subnets across multiple AZs
+  - Application Load Balancer with target groups
+  - Auto Scaling Group with rolling update capabilities
+  - ECR repository for Docker image storage
+  - S3 bucket for static assets and build artifacts
+  - Secrets Manager for secure credential management
+  - IAM roles with least-privilege permissions
 - **iam-policy.json** - Minimal IAM permissions for CI/CD deployment
 
 ### Environment Configuration
@@ -77,19 +86,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Integration tests use FastAPI TestClient
 
 ### CI/CD Pipeline
-- GitHub Actions with test and deploy jobs
-- Requires secrets: AWS credentials, EC2 SSH details, CODECOV_TOKEN
-- Automated deployment on main branch push
+- GitHub Actions with containerized deployment
+- Builds Docker images and pushes to ECR
+- Deploys to staging on develop branch, production on main branch
+- Automated rollback capabilities via Auto Scaling Group
+- PR comments with deployment URLs
+- Requires secrets: AWS credentials, CODECOV_TOKEN
 - Uses limited IAM user for CI/CD (not admin credentials)
 
 ### AWS Deployment Notes
 - CDK bootstrap requires admin access (CloudFormation:*, ECR:*, SSM:*, S3:*, IAM:*)
 - After bootstrap, can use limited IAM policy for deployments
-- EC2 instance auto-configures via user data script
-- Update repository URL in `ec2_stack.py:73` before deployment
+- Containerized deployment using Docker and ECR
+- Auto Scaling Group provides zero-downtime deployments
+- Load balancer health checks ensure traffic routing to healthy instances
+- Separate staging and production environments with parameterized stacks
 
 ### Important Configuration Details
-- Repository URL must be updated in `infra/stacks/ec2_stack.py` line 73
+- Repository URL is automatically set from GitHub context in CI/CD
 - Settings class uses `extra="ignore"` to prevent Pydantic validation errors with CDK variables
 - Coverage configuration excludes test files and virtual environments
-- Security groups allow HTTP (80), FastAPI (8000), and SSH (22) access
+- Security groups: Load balancer (80, 443), EC2 instances (8000 from LB only, 22 for SSH)
+- ECR repositories created per environment: `fastapi-staging`, `fastapi-production`
+- Docker images tagged with both `latest` and commit SHA for rollback capability

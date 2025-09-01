@@ -32,6 +32,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
     aws_autoscaling as autoscaling,
+    aws_ecr as ecr,
     CfnOutput,
     Tags,
     RemovalPolicy,
@@ -248,6 +249,25 @@ class EC2Stack(Stack):
         # Grant access to S3 bucket for static assets and artifacts
         assets_bucket.grant_read_write(role)
         
+        # ECR Repository for Docker Images
+        # Why: Stores containerized application images for deployment
+        # How: Private repository with lifecycle policies for cost optimization
+        ecr_repository = ecr.Repository(
+            self, "FastAPIRepository",
+            repository_name=f"fastapi-{self.environment_name}",
+            image_scan_on_push=True,  # Security: scan images for vulnerabilities
+            lifecycle_rules=[
+                ecr.LifecycleRule(
+                    description="Keep only latest 10 images",
+                    max_image_count=10
+                )
+            ],
+            removal_policy=RemovalPolicy.DESTROY  # For dev environments
+        )
+        
+        # Grant ECR access to EC2 instances
+        ecr_repository.grant_pull(role)
+        
         # Application Load Balancer
         # Why: Distributes traffic across multiple instances for high availability
         # How: Internet-facing ALB in public subnets routes to private EC2 instances
@@ -286,45 +306,41 @@ class EC2Stack(Stack):
         # Load Balancer Listener
         # Why: Defines how incoming requests are processed and routed
         # How: HTTP listener forwards to target group, can be extended for HTTPS
-        listener = load_balancer.add_listener(
+        load_balancer.add_listener(
             "HTTPListener",
             port=80,
             protocol=elbv2.ApplicationProtocol.HTTP,
             default_target_groups=[target_group]
         )
         
-        # User Data Script for Instance Configuration
-        # Why: Automates application deployment and configuration on instance startup
-        # How: Shell script installs dependencies, clones code, and starts application
-        # Existing account: Works with existing or new instances
-        # New account: Provides complete application bootstrap process
+        # User Data Script for Containerized Application Deployment
+        # Why: Automates Docker container deployment and configuration on instance startup
+        # How: Installs Docker, authenticates with ECR, and runs containerized application
         user_data = ec2.UserData.for_linux()
         user_data.add_commands(
-            # System updates and dependencies
+            # System updates and Docker installation
             "yum update -y",
-            "yum install -y python3 python3-pip git aws-cli",
-            "pip3 install --upgrade pip",
+            "yum install -y docker aws-cli",
+            "systemctl start docker",
+            "systemctl enable docker",
+            "usermod -a -G docker ec2-user",
             
-            # Application deployment
-            "cd /home/ec2-user",
-            f"git clone {self.repository_url} app",
-            "cd app",
-            "pip3 install -r app/requirements.txt",
+            # ECR authentication and image pull
+            f"aws ecr get-login-password --region {self.region} | docker login --username AWS --password-stdin {ecr_repository.repository_uri}",
+            f"docker pull {ecr_repository.repository_uri}:latest",
             
-            # Configure application to use AWS services
-            f"aws secretsmanager get-secret-value --secret-id {app_secrets.secret_arn} --region {self.region} --query SecretString --output text > /tmp/secrets.json",
-            
-            # Start application as systemd service for reliability
+            # Run containerized application as systemd service
             "cat > /etc/systemd/system/fastapi.service << 'EOF'",
             "[Unit]",
-            "Description=FastAPI application",
-            "After=network.target",
+            "Description=FastAPI Docker Container",
+            "After=docker.service",
+            "Requires=docker.service",
             "",
             "[Service]",
             "Type=simple",
             "User=ec2-user",
-            "WorkingDirectory=/home/ec2-user/app",
-            "ExecStart=/usr/local/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
+            f"ExecStart=/usr/bin/docker run --rm --name fastapi-app -p 8000:8000 -e USE_SECRETS_MANAGER=true -e AWS_DEFAULT_REGION={self.region} {ecr_repository.repository_uri}:latest",
+            "ExecStop=/usr/bin/docker stop fastapi-app",
             "Restart=always",
             "",
             "[Install]",
@@ -420,4 +436,10 @@ class EC2Stack(Stack):
             self, "VPCId",
             value=vpc.vpc_id,
             description="VPC ID for network integration"
+        )
+        
+        CfnOutput(
+            self, "ECRRepositoryURI",
+            value=ecr_repository.repository_uri,
+            description="ECR repository URI for Docker image storage"
         )

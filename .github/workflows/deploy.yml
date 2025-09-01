@@ -38,6 +38,36 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
     
+    - name: Build and Push Docker Image to ECR
+      run: |
+        ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+        ECR_REPOSITORY="fastapi-$ENVIRONMENT"
+        AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }}
+        
+        # Get ECR repository URI
+        ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+        
+        if [ -z "$ECR_URI" ]; then
+          echo "ECR repository not found, will be created by CDK deployment"
+          # Use account ID to construct expected URI
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
+        fi
+        
+        # Login to ECR
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
+        
+        # Build Docker image
+        docker build -t $ECR_REPOSITORY:latest .
+        docker tag $ECR_REPOSITORY:latest $ECR_URI:latest
+        docker tag $ECR_REPOSITORY:latest $ECR_URI:${{ github.sha }}
+        
+        # Push images
+        docker push $ECR_URI:latest
+        docker push $ECR_URI:${{ github.sha }}
+        
+        echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+    
     - name: Deploy CDK Stack
       run: |
         cd infra
