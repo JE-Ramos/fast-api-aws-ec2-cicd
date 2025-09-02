@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_session_token: str = ""
 
-    # Secrets Manager configuration
-    use_secrets_manager: bool = Field(default=False, description="Enable AWS Secrets Manager")
+    # Secrets Manager configuration (always enabled in production)
+    use_secrets_manager: bool = Field(default=True, description="Enable AWS Secrets Manager")
     app_secrets_name: str = Field(default="FastAPIAppSecrets", description="Name of app secrets in Secrets Manager")
     deployment_secrets_name: str = Field(default="FastAPIDeploymentSecrets", description="Name of deployment secrets")
 

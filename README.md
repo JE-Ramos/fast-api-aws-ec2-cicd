@@ -3,96 +3,102 @@
 [![codecov](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd/branch/main/graph/badge.svg)](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd)
 [![Tests](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml/badge.svg)](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml)
 
-A production-ready FastAPI application deployed on AWS EC2 with CI/CD pipeline using AWS CDK.
+A production-ready containerized FastAPI SaaS application with automated CI/CD pipeline using Git Flow, AWS CDK, and ECR.
 
-## CI/CD Pipeline Architecture
+## Git Flow & Containerized CI/CD Architecture
 
 ```mermaid
-graph TD
-    %% Developer Workflow
-    DEV[👨‍💻 Developer] -->|Feature Branch| FEATURE[feature/new-feature]
+flowchart TD
+    %% Git Flow
+    DEV[👨‍💻 Developer] -->|Feature Branch| FEATURE[feature/branch]
     FEATURE -->|Pull Request| DEVELOP[🔄 develop branch]
-    DEVELOP -->|Release| MAIN[🚀 main branch]
+    DEVELOP -->|Create Release| RELEASE[release/v1.x.x]
+    RELEASE -->|Merge to| MAIN[🚀 main branch]
+    RELEASE -->|Merge back to| DEVELOP
     
-    %% CI/CD Triggers
-    FEATURE -->|Push| TEST1[🧪 Run Tests]
-    DEVELOP -->|Merge| CICD_STAGING[📦 CI/CD Staging Pipeline]
-    MAIN -->|Push/Release| CICD_PROD[📦 CI/CD Production Pipeline]
+    %% CI/CD Pipeline with Docker & ECR
+    DEVELOP -->|Push| BUILD_STAGING[🐳 Build Docker Image]
+    BUILD_STAGING -->|Tag: staging-sha| ECR_STAGING[📦 ECR Push<br/>fastapi-staging:staging-shortsha]
+    ECR_STAGING -->|Deploy| STAGING_DEPLOY[🧪 Deploy to Staging]
     
-    %% Secrets Management (New!)
-    subgraph SECRETS_CENTRAL[🔐 AWS Secrets Manager - Single Source of Truth]
-        APP_SECRETS[📱 Application Secrets<br/>DB passwords, JWT, API keys]
-        DEPLOY_SECRETS[🚀 Deployment Secrets<br/>EC2 host, SSH keys, GitHub repo]
+    RELEASE -->|Push to release/main| BUILD_PROD[🐳 Build Docker Image]
+    BUILD_PROD -->|Tag: latest + release-semver| ECR_PROD[📦 ECR Push<br/>fastapi-production:latest<br/>fastapi-production:release-v1.x.x]
+    ECR_PROD -->|Deploy| PROD_DEPLOY[🏭 Deploy to Production]
+    
+    %% ECR Strategy
+    subgraph ECR_REPOS[📦 Amazon ECR Repositories]
+        ECR_STAG_REPO[fastapi-staging<br/>🏷️ staging-shortsha]
+        ECR_PROD_REPO[fastapi-production<br/>🏷️ latest, release-semver]
     end
     
-    %% Updated Pipeline with Secrets Integration
-    CICD_STAGING --> TEST2[🧪 Run Tests]
-    TEST2 -->|✅ Pass| FETCH_SECRETS_STAGING[🔑 Fetch Deployment Secrets]
-    FETCH_SECRETS_STAGING --> DEPLOY_STAGING[🚀 Deploy to Staging EC2]
-    DEPLOY_STAGING -->|Update| DEPLOY_SECRETS
-    
-    CICD_PROD --> TEST3[🧪 Run Tests]
-    TEST3 -->|✅ Pass| FETCH_SECRETS_PROD[🔑 Fetch Deployment Secrets]
-    FETCH_SECRETS_PROD --> DEPLOY_PROD[🚀 Deploy to Production EC2]
-    DEPLOY_PROD -->|Update| DEPLOY_SECRETS
-    
-    %% Infrastructure Components
-    subgraph AWS_INFRA[🏗️ AWS Infrastructure]
-        ALB[⚖️ Application Load Balancer]
-        
-        subgraph STAGING_ENV[🧪 Staging Environment]
-            EC2_STAGING[🖥️ EC2 Instance<br/>Auto-loads secrets at runtime]
-        end
-        
-        subgraph PROD_ENV[🏭 Production Environment]
-            EC2_PROD[🖥️ EC2 Instance<br/>Auto-loads secrets at runtime]
-        end
-        
-        S3_BUCKET[🪣 S3 Bucket<br/>Static Assets & Artifacts]
-        VPC[🌐 VPC<br/>Public & Private Subnets]
+    %% AWS Infrastructure per Environment
+    subgraph AWS_STAGING[🧪 AWS Staging Environment]
+        ALB_STAG[⚖️ Application Load Balancer]
+        ASG_STAG[🔄 Auto Scaling Group]
+        EC2_STAG[🖥️ EC2 Instances<br/>Docker + ECR Pull]
+        SECRETS_STAG[🔐 Secrets Manager<br/>Staging Secrets]
     end
     
-    %% Secrets Flow to Applications
-    APP_SECRETS -.->|Runtime| EC2_STAGING
-    APP_SECRETS -.->|Runtime| EC2_PROD
-    
-    %% GitHub Actions - Simplified Secrets
-    subgraph GITHUB[📦 GitHub Actions]
-        GH_SECRETS[🔑 Only AWS Credentials<br/>No app/deployment secrets needed]
+    subgraph AWS_PROD[🏭 AWS Production Environment]
+        ALB_PROD[⚖️ Application Load Balancer]
+        ASG_PROD[🔄 Auto Scaling Group]
+        EC2_PROD[🖥️ EC2 Instances<br/>Docker + ECR Pull]
+        SECRETS_PROD[🔐 Secrets Manager<br/>Production Secrets]
     end
     
-    CICD_STAGING --> GH_SECRETS
-    CICD_PROD --> GH_SECRETS
+    %% Shared Infrastructure
+    subgraph SHARED_AWS[🌐 Shared AWS Resources]
+        VPC[VPC with Public/Private Subnets]
+        S3[🪣 S3 Bucket<br/>Static Assets]
+    end
     
-    %% Load Balancer Routing
-    ALB -->|staging.domain.com| EC2_STAGING
-    ALB -->|domain.com| EC2_PROD
+    %% Deployment Flow
+    STAGING_DEPLOY --> ECR_STAG_REPO
+    PROD_DEPLOY --> ECR_PROD_REPO
+    
+    ECR_STAG_REPO -.->|Pull Image| EC2_STAG
+    ECR_PROD_REPO -.->|Pull Image| EC2_PROD
+    
+    %% Load Balancer Flow
+    ALB_STAG --> ASG_STAG --> EC2_STAG
+    ALB_PROD --> ASG_PROD --> EC2_PROD
     
     %% External Access
-    USERS[🌍 Users] --> ALB
+    USERS[🌍 Users] --> ALB_STAG
+    USERS --> ALB_PROD
+    
+    %% Rollback Capability
+    ECR_PROD_REPO -->|Rollback to<br/>previous tag| EC2_PROD
     
     %% Styling
     classDef staging fill:#e1f5fe
     classDef production fill:#fff3e0
     classDef cicd fill:#f3e5f5
     classDef aws fill:#fff8e1
-    classDef secrets fill:#e8f5e8
-    classDef github fill:#f0f0f0
+    classDef ecr fill:#e8f5e8
+    classDef shared fill:#f9f9f9
     
-    class STAGING_ENV,EC2_STAGING staging
-    class PROD_ENV,EC2_PROD production
-    class CICD_STAGING,CICD_PROD,TEST1,TEST2,TEST3,FETCH_SECRETS_STAGING,FETCH_SECRETS_PROD cicd
-    class AWS_INFRA,ALB,S3_BUCKET,VPC aws
-    class SECRETS_CENTRAL,APP_SECRETS,DEPLOY_SECRETS secrets
-    class GITHUB,GH_SECRETS github
+    class DEVELOP,BUILD_STAGING,ECR_STAGING,STAGING_DEPLOY,AWS_STAGING,ALB_STAG,ASG_STAG,EC2_STAG,SECRETS_STAG,ECR_STAG_REPO staging
+    class MAIN,BUILD_PROD,ECR_PROD,PROD_DEPLOY,AWS_PROD,ALB_PROD,ASG_PROD,EC2_PROD,SECRETS_PROD,ECR_PROD_REPO production
+    class FEATURE,BUILD_STAGING,BUILD_PROD cicd
+    class ECR_REPOS,ECR_STAG_REPO,ECR_PROD_REPO ecr
+    class SHARED_AWS,VPC,S3 shared
 ```
 
-### Pipeline Flow Summary
+### Git Flow & Deployment Strategy
 
-1. **Feature Development** → Tests run on every push
-2. **Staging Deployment** → Automatic on `develop` branch merge
-3. **Production Deployment** → Manual approval required from `main` branch
-4. **Rollback** → Auto Scaling Group rolling updates ensure zero-downtime recovery
+1. **Feature Development** → Create `feature/branch` → PR to `develop`
+2. **Staging Deployment** → `develop` branch auto-deploys with `staging-shortsha` tags
+3. **Release Preparation** → Create `release/v1.x.x` branch FROM `develop`
+4. **Production Deployment** → `release/v1.x.x` OR `main` branch deploys with `latest` + `release-v1.x.x` tags
+5. **Release Completion** → Merge `release/v1.x.x` to `main` AND back to `develop`
+6. **Rollback** → Auto Scaling Group pulls previous ECR image tags for zero-downtime recovery
+
+### Container Image Tagging Strategy
+
+- **Staging**: `fastapi-staging:staging-{short-commit-sha}`
+- **Production**: `fastapi-production:latest` + `fastapi-production:release-v1.x.x`
+- **Rollback**: Deploy previous release tag from ECR history
 
 ## Project Structure
 
@@ -124,7 +130,8 @@ graph TD
 - Python 3.9+
 - AWS Account with configured credentials
 - AWS CDK CLI (`npm install -g aws-cdk`)
-- Docker (optional, for containerized deployment)
+- Docker (required for production deployment)
+- AWS CDK CLI v2
 
 ### IAM Setup for CI/CD (Optional - for GitHub Actions)
 
@@ -238,7 +245,26 @@ pip install -r requirements.txt
 
 ## Local Development
 
-### Running the FastAPI application
+### Running the Containerized Application
+
+**Using Docker (Recommended):**
+```bash
+# Build the Docker image
+docker build -t fastapi-app .
+
+# Run with Secrets Manager integration
+docker run -d -p 8000:8000 --name fastapi-local \
+  -e USE_SECRETS_MANAGER=true \
+  -e AWS_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  fastapi-app
+
+# Check logs
+docker logs fastapi-local
+```
+
+**Direct Python (Development only):**
 ```bash
 cd app
 uvicorn main:app --reload --port 8000
@@ -264,6 +290,19 @@ uvicorn app.main:app --reload --port 8000
 Access at: http://localhost:8000/docs
 
 ## ☁️ AWS Infrastructure Deployment
+
+### Architecture Overview
+
+The infrastructure follows tasks.md requirements:
+- ✅ **Separate staging/production environments** with parameterized CDK stacks
+- ✅ **Containerized deployment** using Docker and Amazon ECR
+- ✅ **Build artifacts storage** in ECR with proper tagging strategy
+- ✅ **Rollback capabilities** via Auto Scaling Group and ECR image history
+- ✅ **Load balancer** distributing traffic across instances
+- ✅ **Secrets management** using AWS Secrets Manager
+- ✅ **Infrastructure as Code** using AWS CDK
+
+## ☁️ Container-Based AWS Deployment
 
 **Reference:** [AWS CDK Bootstrapping Guide](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html)
 
@@ -323,30 +362,31 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Preview deployment (optional)
-cdk diff
+# 2. Deploy staging environment
+cdk deploy FastAPIEC2Stack-Staging
 
-# 3. Deploy infrastructure
-cdk deploy FastAPIEC2Stack
+# 3. Deploy production environment (optional)
+cdk deploy FastAPIEC2Stack-Production
 
-# 4. Save the EC2 IP from the output
+# 4. Save the Load Balancer DNS from outputs
 ```
 
-### Step 4: Deploy Application to EC2
+### Step 4: Container Deployment via CI/CD
 
-1. **Update repository URL** in `infra/stacks/ec2_stack.py` (line ~41):
-   ```python
-   "git clone https://github.com/JE-Ramos/fast-api-aws-ec2-cicd.git app",
-   ```
+1. **Push to develop branch** → Triggers staging deployment
+2. **Create release branch** → `git checkout -b release/v1.0.0`
+3. **Merge to main** → Triggers production deployment
+4. **Access via Load Balancer DNS** (from CDK outputs)
 
-2. **The application will auto-deploy** via the user data script when the EC2 instance starts
-
-3. **Access your app** at: `http://YOUR-EC2-IP:8000`
+**Container Images:**
+- Staging: `fastapi-staging:staging-{commit-sha}`
+- Production: `fastapi-production:latest` + `fastapi-production:release-v1.x.x`
 
 ### Cleanup (Important!)
 ```bash
 cd infra
-cdk destroy FastAPIEC2Stack  # Avoid AWS charges
+cdk destroy FastAPIEC2Stack-Staging   # Destroy staging
+cdk destroy FastAPIEC2Stack-Production # Destroy production
 ```
 
 ## 🤔 Already Bootstrapped Account?
@@ -367,23 +407,25 @@ According to [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/v2/guide/bo
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow automatically:
-1. Runs tests on push to main
-2. Builds and validates the application
-3. Deploys to AWS EC2 using CDK
+The GitHub Actions workflow follows Git Flow:
+1. **Feature branches** → Run tests and PR checks
+2. **Develop branch** → Build Docker image → Push to ECR staging → Deploy to staging
+3. **Main branch** → Build Docker image → Push to ECR production → Deploy to production
+4. **Auto rollback** via Auto Scaling Group if health checks fail
 
 ### Required GitHub Secrets
 
 Configure these secrets in your GitHub repository settings:
-- `AWS_ACCESS_KEY_ID` - Limited IAM user access key (see IAM Setup section)
-- `AWS_SECRET_ACCESS_KEY` - Limited IAM user secret key  
+- `AWS_ACCESS_KEY_ID` - IAM user with ECR and CDK permissions
+- `AWS_SECRET_ACCESS_KEY` - IAM user secret key  
 - `AWS_REGION` - AWS region (default: us-east-1)
 - `CODECOV_TOKEN` - (Optional) Token for Codecov integration
-- `EC2_SSH_KEY` - Private SSH key for EC2 access
 
-**🆕 Simplified with AWS Secrets Manager:** All deployment configuration (EC2 host, username, etc.) is now managed centrally in AWS Secrets Manager. GitHub Actions only needs AWS credentials to access these secrets.
-
-**Note:** For CI/CD, use the limited IAM user created in the "IAM Setup for CI/CD" section above.
+**🆕 Container-First Approach:** 
+- Application secrets managed in AWS Secrets Manager
+- Container images stored in ECR with environment-specific tagging
+- Zero-downtime deployments via Auto Scaling Group rolling updates
+- Automatic PR comments with deployment URLs
 
 ## Environment Variables
 
@@ -430,11 +472,20 @@ After running tests, coverage reports are available in:
 
 ## Security Considerations
 
-- Never commit `.env` files with real credentials
-- Use AWS IAM roles for production
-- Implement proper authentication/authorization
-- Use HTTPS in production
-- Regularly update dependencies
+- ✅ **Secrets Management**: AWS Secrets Manager for all sensitive data
+- ✅ **Container Security**: ECR image scanning enabled
+- ✅ **Network Security**: VPC with private subnets, security groups with least privilege
+- ✅ **IAM Security**: Minimal permissions for CI/CD user
+- ✅ **Zero Credentials in Code**: No secrets in repositories or container images
+- ✅ **HTTPS Ready**: Load balancer supports SSL termination
+- 🔄 **Regular Updates**: Automated dependency updates via Dependabot
+
+## Rollback Strategy
+
+1. **ECR Image History**: Previous releases tagged as `release-v1.x.x`
+2. **Auto Scaling Group**: Rolling updates with health checks
+3. **Zero Downtime**: Min 1 instance always running during deployment
+4. **Automated Rollback**: Failed health checks trigger automatic rollback
 
 ## License
 

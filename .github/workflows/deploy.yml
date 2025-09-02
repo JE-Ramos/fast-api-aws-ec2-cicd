@@ -2,12 +2,12 @@ name: FastAPI SaaS CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'release/**']
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
     
     steps:
     - uses: actions/checkout@v4
@@ -40,9 +40,10 @@ jobs:
     
     - name: Build and Push Docker Image to ECR
       run: |
-        ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+        ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
         ECR_REPOSITORY="fastapi-$ENVIRONMENT"
         AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }}
+        SHORT_SHA=$(echo ${{ github.sha }} | head -c 7)
         
         # Get ECR repository URI
         ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
@@ -58,13 +59,32 @@ jobs:
         aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
         
         # Build Docker image
-        docker build -t $ECR_REPOSITORY:latest .
-        docker tag $ECR_REPOSITORY:latest $ECR_URI:latest
-        docker tag $ECR_REPOSITORY:latest $ECR_URI:${{ github.sha }}
+        docker build -t $ECR_REPOSITORY .
         
-        # Push images
-        docker push $ECR_URI:latest
-        docker push $ECR_URI:${{ github.sha }}
+        if [ "$ENVIRONMENT" = "staging" ]; then
+          # Staging: tag with staging-shortsha
+          IMAGE_TAG="staging-$SHORT_SHA"
+          docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:$IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        else
+          # Production: tag with latest and release-semver
+          docker tag $ECR_REPOSITORY $ECR_URI:latest
+          docker push $ECR_URI:latest
+          
+          # Extract semver from release branch or use commit for main
+          if [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            SEMVER=$(echo "${{ github.ref }}" | sed 's/refs\/heads\/release\///')
+            RELEASE_TAG="release-$SEMVER"
+          else
+            # Fallback for direct main branch pushes
+            RELEASE_TAG="release-$(date +%Y.%m.%d)-$SHORT_SHA"
+          fi
+          
+          docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
+          docker push $ECR_URI:$RELEASE_TAG
+          echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+        fi
         
         echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
     
@@ -72,7 +92,7 @@ jobs:
       run: |
         cd infra
         export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
-        STACK_NAME="FastAPIEC2Stack-${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}"
+        STACK_NAME="FastAPIEC2Stack-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}"
         cdk synth $STACK_NAME
         cdk deploy $STACK_NAME --require-approval never --outputs-file outputs.json
         
@@ -104,7 +124,7 @@ jobs:
             
             # Export EC2_HOST for the next step
             echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
-            echo "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}" >> $GITHUB_ENV
+            echo "ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}" >> $GITHUB_ENV
           fi
         fi
     
