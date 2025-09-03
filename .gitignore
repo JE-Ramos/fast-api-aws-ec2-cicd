@@ -74,5 +74,7 @@ htmlcov/
 .tox/
 .nox/
 coverage.xml
+coverage.json
+pytest.xml
 *.cover
 .hypothesis/

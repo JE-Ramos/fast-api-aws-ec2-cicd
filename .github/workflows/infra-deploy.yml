@@ -1,0 +1,94 @@
+name: 🏗️ Infrastructure Deployment
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+    paths: ['infra/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+jobs:
+  setup:
+    uses: ./.github/workflows/shared-setup.yml
+    with:
+      environment: ${{ inputs.environment || '' }}
+    secrets: inherit
+  
+  deploy-infrastructure:
+    name: Deploy Infrastructure to ${{ needs.setup.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: setup
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install AWS CDK
+      run: npm install -g aws-cdk
+    
+    - name: Install CDK dependencies
+      run: |
+        cd infra
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ needs.setup.outputs.aws-region }}
+    
+    - name: Deploy CDK Infrastructure Stack
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        AWS_REGION="${{ needs.setup.outputs.aws-region }}"
+        STACK_NAME="FastAPIEC2Stack-${ENVIRONMENT^}"
+        
+        echo "Deploying stack: $STACK_NAME"
+        cdk synth $STACK_NAME
+        cdk deploy $STACK_NAME --require-approval never --outputs-file outputs.json
+        
+        # Output deployment information
+        echo "✅ Infrastructure deployed successfully"
+        echo "🏗️ Stack: $STACK_NAME"
+        echo "🎯 Environment: $ENVIRONMENT"
+        
+        # Get key outputs for verification
+        ECR_URI=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='ECRRepositoryURI'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        LOAD_BALANCER_DNS=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNS'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$ECR_URI" ]; then
+          echo "ECR Repository: $ECR_URI"
+        fi
+        
+        if [ ! -z "$LOAD_BALANCER_DNS" ]; then
+          echo "Load Balancer: $LOAD_BALANCER_DNS"
+        fi

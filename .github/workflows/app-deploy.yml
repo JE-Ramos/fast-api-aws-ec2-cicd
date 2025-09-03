@@ -1,0 +1,183 @@
+name: 🚀 Application Deployment
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+    paths: ['app/**', 'Dockerfile', 'requirements.txt']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r app/requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=html
+    
+    - name: Run linting
+      run: |
+        flake8 app --max-line-length=127
+        black --check app/
+  
+  setup:
+    uses: ./.github/workflows/shared-setup.yml
+    with:
+      environment: ${{ inputs.environment || '' }}
+    secrets: inherit
+  
+  deploy-application:
+    name: Deploy App to ${{ needs.setup.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [test, setup]
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ needs.setup.outputs.aws-region }}
+    
+    - name: Build and Push Docker Image to ECR
+      run: |
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        ECR_REPOSITORY="fastapi-$ENVIRONMENT"
+        AWS_REGION="${{ needs.setup.outputs.aws-region }}"
+        SHORT_SHA=$(echo ${{ github.sha }} | head -c 7)
+        
+        # Check if ECR repository exists (should be created by infrastructure pipeline)
+        ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+        
+        if [ -z "$ECR_URI" ]; then
+          echo "::error::🏗️ ECR repository '$ECR_REPOSITORY' not found. Please deploy the infrastructure first."
+          echo "🛠️ Manual: cd infra && cdk deploy FastAPIEC2Stack-${ENVIRONMENT^}"
+          echo "🤖 Automated: Trigger the infrastructure pipeline manually"
+          exit 1
+        fi
+        
+        echo "📦 Found ECR repository: $ECR_URI"
+        
+        # Login to ECR
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
+        
+        # Build Docker image
+        docker build -t $ECR_REPOSITORY .
+        
+        if [ "$ENVIRONMENT" = "staging" ]; then
+          # Staging: tag with staging-shortsha
+          IMAGE_TAG="staging-$SHORT_SHA"
+          docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:$IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        else
+          # Production: tag with latest and release-semver
+          docker tag $ECR_REPOSITORY $ECR_URI:latest
+          docker push $ECR_URI:latest
+          
+          # Extract semver from release branch or use commit for main
+          if [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            SEMVER=$(echo "${{ github.ref }}" | sed 's/refs\/heads\/release\///')
+            RELEASE_TAG="release-$SEMVER"
+          else
+            # Fallback for direct main branch pushes
+            RELEASE_TAG="release-$(date +%Y.%m.%d)-$SHORT_SHA"
+          fi
+          
+          docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
+          docker push $ECR_URI:$RELEASE_TAG
+          echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+        fi
+        
+        echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+        echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+    
+    - name: Trigger EC2 Deployment Update
+      run: |
+        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment^}}"
+        
+        # Check if stack exists
+        STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
+        
+        if [ -z "$STACK_EXISTS" ]; then
+          echo "::warning::CloudFormation stack '$STACK_NAME' not found. Infrastructure should be deployed first."
+          exit 0  # Don't fail, just skip deployment
+        fi
+        
+        # Get EC2 instance info
+        INSTANCE_ID=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$INSTANCE_ID" ]; then
+          EC2_HOST=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text 2>/dev/null || echo "")
+          
+          if [ ! -z "$EC2_HOST" ]; then
+            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+            echo "🚀 Deployed to EC2 instance: $EC2_HOST"
+            echo "🔒 Application will pull latest config from Secrets Manager automatically"
+          fi
+        fi
+    
+    - name: Comment Deployment URL on PR
+      if: github.event_name == 'push' && env.EC2_HOST != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const environment = process.env.ENVIRONMENT;
+          const ec2Host = process.env.EC2_HOST;
+          const deploymentUrl = `http://${ec2Host}:8000`;
+          const imageTag = process.env.IMAGE_TAG;
+          
+          // Get the current branch
+          const branch = context.ref.replace('refs/heads/', '');
+          
+          // Find any open PRs from the current branch
+          const { data: pulls } = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            head: `${context.repo.owner}:${branch}`
+          });
+          
+          const commitSha = context.sha;
+          
+          for (const pull of pulls) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+              body: `## 🚀 Application Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n**Docker Tag:** ${imageTag}\n\n*App pulls config from AWS Secrets Manager automatically*\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
+            });
+          }
