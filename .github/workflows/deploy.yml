@@ -12,25 +12,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-    
-    - name: Install AWS CDK
-      run: npm install -g aws-cdk
-    
-    - name: Install CDK dependencies
-      run: |
-        cd infra
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -45,15 +26,16 @@ jobs:
         AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }}
         SHORT_SHA=$(echo ${{ github.sha }} | head -c 7)
         
-        # Get ECR repository URI
+        # Check if ECR repository exists
         ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
         
         if [ -z "$ECR_URI" ]; then
-          echo "ECR repository not found, will be created by CDK deployment"
-          # Use account ID to construct expected URI
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
+          echo "::error::ECR repository '$ECR_REPOSITORY' not found. Please deploy the CDK infrastructure first by running 'cdk deploy' locally."
+          echo "Run: cd infra && cdk deploy FastAPIEC2Stack-${ENVIRONMENT^}"
+          exit 1
         fi
+        
+        echo "Found ECR repository: $ECR_URI"
         
         # Login to ECR
         aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
@@ -88,43 +70,36 @@ jobs:
         
         echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
     
-    - name: Deploy CDK Stack
+    - name: Get Stack Information
       run: |
-        cd infra
-        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        # Get stack information from existing infrastructure
         STACK_NAME="FastAPIEC2Stack-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}"
-        cdk synth $STACK_NAME
-        cdk deploy $STACK_NAME --require-approval never --outputs-file outputs.json
         
-        # Update deployment secrets with EC2 instance info if available
-        INSTANCE_ID=$(aws cloudformation describe-stacks \
-          --stack-name $STACK_NAME \
-          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
-          --output text 2>/dev/null || echo "")
+        # Check if stack exists
+        STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
         
-        if [ ! -z "$INSTANCE_ID" ]; then
-          EC2_HOST=$(aws ec2 describe-instances \
-            --instance-ids $INSTANCE_ID \
-            --query "Reservations[0].Instances[0].PublicIpAddress" \
+        if [ -z "$STACK_EXISTS" ]; then
+          echo "::warning::CloudFormation stack '$STACK_NAME' not found. Infrastructure should be deployed locally first."
+          echo "Run: cd infra && cdk deploy $STACK_NAME"
+        else
+          # Get EC2 instance info if available
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
             --output text 2>/dev/null || echo "")
           
-          # Update deployment secret if we have the EC2 host
-          if [ ! -z "$EC2_HOST" ]; then
-            DEPLOYMENT_SECRETS_ARN=$(aws cloudformation describe-stacks \
-              --stack-name $STACK_NAME \
-              --query "Stacks[0].Outputs[?OutputKey=='DeploymentSecretsArn'].OutputValue" \
+          if [ ! -z "$INSTANCE_ID" ]; then
+            EC2_HOST=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_ID \
+              --query "Reservations[0].Instances[0].PublicIpAddress" \
               --output text 2>/dev/null || echo "")
             
-            if [ ! -z "$DEPLOYMENT_SECRETS_ARN" ]; then
-              aws secretsmanager update-secret \
-                --secret-id "$DEPLOYMENT_SECRETS_ARN" \
-                --secret-string "{\"ec2_key_name\":\"fastapi-key\",\"ec2_host\":\"$EC2_HOST\",\"ec2_user\":\"ec2-user\",\"github_repo\":\"$REPOSITORY_URL\"}" \
-                2>/dev/null || echo "Could not update deployment secrets"
+            if [ ! -z "$EC2_HOST" ]; then
+              # Export EC2_HOST for the next step
+              echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+              echo "ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}" >> $GITHUB_ENV
+              echo "Found EC2 instance at: $EC2_HOST"
             fi
-            
-            # Export EC2_HOST for the next step
-            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
-            echo "ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}" >> $GITHUB_ENV
           fi
         fi
     
