@@ -7,8 +7,12 @@ client = TestClient(app)
 def test_read_root():
     response = client.get("/")
     assert response.status_code == 200
-    assert "message" in response.json()
-    assert response.json()["message"] == "Welcome to FastAPI AWS App with PR Checks"
+    data = response.json()
+    assert "message" in data
+    assert data["message"] == "Welcome to FastAPI AWS App with PR Checks"
+    assert data["version"] == "1.1.0"
+    assert data["api_version"] == "v1"
+    assert "features" in data
 
 
 def test_health_check():
@@ -27,7 +31,11 @@ def test_get_items():
 def test_get_item():
     response = client.get("/api/v1/items/1")
     assert response.status_code == 200
-    assert response.json() == {"id": 1, "name": "Item 1"}
+    data = response.json()
+    assert data["id"] == 1
+    assert data["name"] == "Item 1"
+    assert data["version"] == "1.0"
+    assert data["api_version"] == "v1"
 
 
 def test_get_item_not_found():

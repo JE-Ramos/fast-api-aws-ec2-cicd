@@ -9,6 +9,8 @@ class TestAPIIntegration:
     def test_full_api_flow(self):
         response = client.get("/")
         assert response.status_code == 200
+        data = response.json()
+        assert "api_version" in data
         
         response = client.get("/health")
         assert response.status_code == 200
