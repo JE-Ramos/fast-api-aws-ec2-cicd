@@ -1,0 +1,42 @@
+name: Shared Setup
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+    outputs:
+      environment:
+        description: "The deployment environment"
+        value: ${{ jobs.setup.outputs.environment }}
+      aws-region:
+        description: "AWS region for deployment"
+        value: ${{ jobs.setup.outputs.aws-region }}
+
+jobs:
+  setup:
+    name: Common Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      aws-region: ${{ steps.env.outputs.aws-region }}
+    
+    steps:
+    - name: Determine Environment
+      id: env
+      run: |
+        if [ "${{ inputs.environment }}" != "" ]; then
+          ENVIRONMENT="${{ inputs.environment }}"
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+          ENVIRONMENT="production"
+        else
+          ENVIRONMENT="staging"
+        fi
+        
+        AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+        
+        echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+        echo "aws-region=$AWS_REGION" >> $GITHUB_OUTPUT
+        echo "🎯 Target Environment: $ENVIRONMENT"
+        echo "🌍 AWS Region: $AWS_REGION"
