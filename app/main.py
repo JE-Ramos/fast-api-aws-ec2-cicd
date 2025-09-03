@@ -30,11 +30,11 @@ app.include_router(routes.router, prefix=settings.api_v1_prefix)
 @app.get("/")
 async def root() -> dict[str, Any]:
     return {
-        "message": "Welcome to FastAPI AWS App with PR Checks", 
-        "environment": settings.environment, 
+        "message": "Welcome to FastAPI AWS App with PR Checks",
+        "environment": settings.environment,
         "version": "1.1.0",
         "api_version": "v1",
-        "features": ["API versioning", "Containerized deployment"]
+        "features": ["API versioning", "Containerized deployment"],
     }
 
 
