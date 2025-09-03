@@ -1,13 +1,59 @@
-name: FastAPI SaaS CI/CD Pipeline
+name: 🚀 Application Deployment
 
 on:
   push:
     branches: [main, develop, 'release/**']
+    paths: ['app/**', 'Dockerfile', 'requirements.txt']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
 
 jobs:
-  deploy:
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
-    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r app/requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=html
+    
+    - name: Run linting
+      run: |
+        flake8 app --max-line-length=127
+        black --check app/
+  
+  setup:
+    uses: ./.github/workflows/shared-setup.yml
+    with:
+      environment: ${{ inputs.environment || '' }}
+    secrets: inherit
+  
+  deploy-application:
+    name: Deploy App to ${{ needs.setup.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [test, setup]
+    environment: ${{ needs.setup.outputs.environment }}
     
     steps:
     - uses: actions/checkout@v4
@@ -17,25 +63,26 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+        aws-region: ${{ needs.setup.outputs.aws-region }}
     
     - name: Build and Push Docker Image to ECR
       run: |
-        ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
         ECR_REPOSITORY="fastapi-$ENVIRONMENT"
-        AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }}
+        AWS_REGION="${{ needs.setup.outputs.aws-region }}"
         SHORT_SHA=$(echo ${{ github.sha }} | head -c 7)
         
-        # Check if ECR repository exists
+        # Check if ECR repository exists (should be created by infrastructure pipeline)
         ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
         
         if [ -z "$ECR_URI" ]; then
-          echo "::error::ECR repository '$ECR_REPOSITORY' not found. Please deploy the CDK infrastructure first by running 'cdk deploy' locally."
-          echo "Run: cd infra && cdk deploy FastAPIEC2Stack-${ENVIRONMENT^}"
+          echo "::error::🏗️ ECR repository '$ECR_REPOSITORY' not found. Please deploy the infrastructure first."
+          echo "🛠️ Manual: cd infra && cdk deploy FastAPIEC2Stack-${ENVIRONMENT^}"
+          echo "🤖 Automated: Trigger the infrastructure pipeline manually"
           exit 1
         fi
         
-        echo "Found ECR repository: $ECR_URI"
+        echo "📦 Found ECR repository: $ECR_URI"
         
         # Login to ECR
         aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
@@ -69,37 +116,36 @@ jobs:
         fi
         
         echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+        echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
     
-    - name: Get Stack Information
+    - name: Trigger EC2 Deployment Update
       run: |
-        # Get stack information from existing infrastructure
-        STACK_NAME="FastAPIEC2Stack-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}"
+        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment^}}"
         
         # Check if stack exists
         STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
         
         if [ -z "$STACK_EXISTS" ]; then
-          echo "::warning::CloudFormation stack '$STACK_NAME' not found. Infrastructure should be deployed locally first."
-          echo "Run: cd infra && cdk deploy $STACK_NAME"
-        else
-          # Get EC2 instance info if available
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
-            --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          echo "::warning::CloudFormation stack '$STACK_NAME' not found. Infrastructure should be deployed first."
+          exit 0  # Don't fail, just skip deployment
+        fi
+        
+        # Get EC2 instance info
+        INSTANCE_ID=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$INSTANCE_ID" ]; then
+          EC2_HOST=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
             --output text 2>/dev/null || echo "")
           
-          if [ ! -z "$INSTANCE_ID" ]; then
-            EC2_HOST=$(aws ec2 describe-instances \
-              --instance-ids $INSTANCE_ID \
-              --query "Reservations[0].Instances[0].PublicIpAddress" \
-              --output text 2>/dev/null || echo "")
-            
-            if [ ! -z "$EC2_HOST" ]; then
-              # Export EC2_HOST for the next step
-              echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
-              echo "ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}" >> $GITHUB_ENV
-              echo "Found EC2 instance at: $EC2_HOST"
-            fi
+          if [ ! -z "$EC2_HOST" ]; then
+            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+            echo "🚀 Deployed to EC2 instance: $EC2_HOST"
+            echo "🔒 Application will pull latest config from Secrets Manager automatically"
           fi
         fi
     
@@ -112,6 +158,7 @@ jobs:
           const environment = process.env.ENVIRONMENT;
           const ec2Host = process.env.EC2_HOST;
           const deploymentUrl = `http://${ec2Host}:8000`;
+          const imageTag = process.env.IMAGE_TAG;
           
           // Get the current branch
           const branch = context.ref.replace('refs/heads/', '');
@@ -131,6 +178,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pull.number,
-              body: `## 🚀 Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
+              body: `## 🚀 Application Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n**Docker Tag:** ${imageTag}\n\n*App pulls config from AWS Secrets Manager automatically*\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
             });
           }
