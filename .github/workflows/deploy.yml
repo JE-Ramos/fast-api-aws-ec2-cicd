@@ -1,0 +1,161 @@
+name: FastAPI SaaS CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install AWS CDK
+      run: npm install -g aws-cdk
+    
+    - name: Install CDK dependencies
+      run: |
+        cd infra
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    
+    - name: Build and Push Docker Image to ECR
+      run: |
+        ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'production' || 'staging' }}
+        ECR_REPOSITORY="fastapi-$ENVIRONMENT"
+        AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }}
+        SHORT_SHA=$(echo ${{ github.sha }} | head -c 7)
+        
+        # Get ECR repository URI
+        ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+        
+        if [ -z "$ECR_URI" ]; then
+          echo "ECR repository not found, will be created by CDK deployment"
+          # Use account ID to construct expected URI
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
+        fi
+        
+        # Login to ECR
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
+        
+        # Build Docker image
+        docker build -t $ECR_REPOSITORY .
+        
+        if [ "$ENVIRONMENT" = "staging" ]; then
+          # Staging: tag with staging-shortsha
+          IMAGE_TAG="staging-$SHORT_SHA"
+          docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:$IMAGE_TAG
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        else
+          # Production: tag with latest and release-semver
+          docker tag $ECR_REPOSITORY $ECR_URI:latest
+          docker push $ECR_URI:latest
+          
+          # Extract semver from release branch or use commit for main
+          if [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            SEMVER=$(echo "${{ github.ref }}" | sed 's/refs\/heads\/release\///')
+            RELEASE_TAG="release-$SEMVER"
+          else
+            # Fallback for direct main branch pushes
+            RELEASE_TAG="release-$(date +%Y.%m.%d)-$SHORT_SHA"
+          fi
+          
+          docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
+          docker push $ECR_URI:$RELEASE_TAG
+          echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+        fi
+        
+        echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+    
+    - name: Deploy CDK Stack
+      run: |
+        cd infra
+        export REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}.git
+        STACK_NAME="FastAPIEC2Stack-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}"
+        cdk synth $STACK_NAME
+        cdk deploy $STACK_NAME --require-approval never --outputs-file outputs.json
+        
+        # Update deployment secrets with EC2 instance info if available
+        INSTANCE_ID=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$INSTANCE_ID" ]; then
+          EC2_HOST=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text 2>/dev/null || echo "")
+          
+          # Update deployment secret if we have the EC2 host
+          if [ ! -z "$EC2_HOST" ]; then
+            DEPLOYMENT_SECRETS_ARN=$(aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --query "Stacks[0].Outputs[?OutputKey=='DeploymentSecretsArn'].OutputValue" \
+              --output text 2>/dev/null || echo "")
+            
+            if [ ! -z "$DEPLOYMENT_SECRETS_ARN" ]; then
+              aws secretsmanager update-secret \
+                --secret-id "$DEPLOYMENT_SECRETS_ARN" \
+                --secret-string "{\"ec2_key_name\":\"fastapi-key\",\"ec2_host\":\"$EC2_HOST\",\"ec2_user\":\"ec2-user\",\"github_repo\":\"$REPOSITORY_URL\"}" \
+                2>/dev/null || echo "Could not update deployment secrets"
+            fi
+            
+            # Export EC2_HOST for the next step
+            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+            echo "ENVIRONMENT=${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && 'Production' || 'Staging' }}" >> $GITHUB_ENV
+          fi
+        fi
+    
+    - name: Comment Deployment URL on PR
+      if: github.event_name == 'push' && env.EC2_HOST != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const environment = process.env.ENVIRONMENT;
+          const ec2Host = process.env.EC2_HOST;
+          const deploymentUrl = `http://${ec2Host}:8000`;
+          
+          // Get the current branch
+          const branch = context.ref.replace('refs/heads/', '');
+          
+          // Find any open PRs from the current branch
+          const { data: pulls } = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            head: `${context.repo.owner}:${branch}`
+          });
+          
+          const commitSha = context.sha;
+          
+          for (const pull of pulls) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+              body: `## 🚀 Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
+            });
+          }
