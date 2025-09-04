@@ -120,7 +120,7 @@ jobs:
     
     - name: Trigger EC2 Deployment Update
       run: |
-        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment^}}"
+        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment }}"
         
         # Check if stack exists
         STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
