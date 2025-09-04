@@ -156,8 +156,31 @@ jobs:
           echo "::warning::Could not retrieve Load Balancer DNS from stack"
         fi
     
+    - name: Deployment Summary
+      if: env.LB_DNS != ''
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Environment: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Application URL** | http://${{ env.LB_DNS }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **API Documentation** | http://${{ env.LB_DNS }}/docs |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Health Check** | http://${{ env.LB_DNS }}/health |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Load Balancer DNS** | ${{ env.LB_DNS }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Docker Image Tag** | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ECR Repository** | ${{ env.ECR_URI }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Deployment Info" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Application successfully deployed and pulling configuration from AWS Secrets Manager" >> $GITHUB_STEP_SUMMARY
+    
     - name: Comment Deployment URL on PR
-      if: github.event_name == 'push' && env.LB_DNS != ''
+      if: github.event_name == 'pull_request' && env.LB_DNS != ''
       uses: actions/github-script@v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -166,25 +189,12 @@ jobs:
           const lbDns = process.env.LB_DNS;
           const deploymentUrl = process.env.DEPLOYMENT_URL;
           const imageTag = process.env.IMAGE_TAG;
-          
-          // Get the current branch
-          const branch = context.ref.replace('refs/heads/', '');
-          
-          // Find any open PRs from the current branch
-          const { data: pulls } = await github.rest.pulls.list({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            state: 'open',
-            head: `${context.repo.owner}:${branch}`
-          });
-          
           const commitSha = context.sha;
           
-          for (const pull of pulls) {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pull.number,
-              body: `## 🚀 Application Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n**Docker Tag:** ${imageTag}\n\n*App pulls config from AWS Secrets Manager automatically*\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)} on branch ${branch}*`
-            });
-          }
+          // Comment on the PR that triggered this workflow
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: `## 🚀 Application Deployment Successful!\n\n**Environment:** ${environment}\n**URL:** ${deploymentUrl}\n**API Documentation:** ${deploymentUrl}/docs\n**Docker Tag:** ${imageTag}\n\n*App pulls config from AWS Secrets Manager automatically*\n\n---\n*Deployed from commit ${commitSha.substring(0, 7)}*`
+          });
