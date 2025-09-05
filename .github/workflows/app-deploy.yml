@@ -124,10 +124,15 @@ jobs:
     - name: Trigger EC2 Deployment Update
       id: get-deployment-url
       run: |
-        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment }}"
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        # Capitalize first letter of environment for stack name
+        STACK_NAME="FastAPIEC2Stack-${ENVIRONMENT^}"
         AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         AWS_REGION="${{ needs.setup.outputs.aws-region }}"
-        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        
+        echo "🔍 Looking for stack: $STACK_NAME"
+        echo "📍 Environment: $ENVIRONMENT"
+        echo "🌎 Region: $AWS_REGION"
         
         # Check if stack exists
         STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
@@ -138,13 +143,15 @@ jobs:
         fi
         
         # Get Auto Scaling Group name from stack
+        echo "📋 Fetching Auto Scaling Group from stack..."
         ASG_NAME=$(aws cloudformation describe-stack-resources \
           --stack-name $STACK_NAME \
           --query "StackResources[?ResourceType=='AWS::AutoScaling::AutoScalingGroup'].PhysicalResourceId" \
           --output text 2>/dev/null || echo "")
         
         if [ ! -z "$ASG_NAME" ]; then
-          echo "🔄 Triggering instance refresh for Auto Scaling Group: $ASG_NAME"
+          echo "✅ Found Auto Scaling Group: $ASG_NAME"
+          echo "🔄 Triggering instance refresh..."
           
           # Start instance refresh to pull new Docker image
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
@@ -159,6 +166,8 @@ jobs:
           else
             echo "::warning::Could not start instance refresh. Manual deployment may be required."
           fi
+        else
+          echo "::warning::No Auto Scaling Group found in stack $STACK_NAME"
         fi
         
         # Get Load Balancer DNS from CloudFormation stack outputs
@@ -187,7 +196,7 @@ jobs:
         fi
     
     - name: Deployment Summary
-      if: env.LB_DNS != ''
+      if: steps.get-deployment-url.outputs.load_balancer_dns != ''
       run: |
         echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
