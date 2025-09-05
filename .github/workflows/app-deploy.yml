@@ -125,6 +125,9 @@ jobs:
       id: get-deployment-url
       run: |
         STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment }}"
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        AWS_REGION="${{ needs.setup.outputs.aws-region }}"
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
         
         # Check if stack exists
         STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
@@ -132,6 +135,30 @@ jobs:
         if [ -z "$STACK_EXISTS" ]; then
           echo "::warning::CloudFormation stack '$STACK_NAME' not found. Infrastructure should be deployed first."
           exit 0  # Don't fail, just skip deployment
+        fi
+        
+        # Get Auto Scaling Group name from stack
+        ASG_NAME=$(aws cloudformation describe-stack-resources \
+          --stack-name $STACK_NAME \
+          --query "StackResources[?ResourceType=='AWS::AutoScaling::AutoScalingGroup'].PhysicalResourceId" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$ASG_NAME" ]; then
+          echo "🔄 Triggering instance refresh for Auto Scaling Group: $ASG_NAME"
+          
+          # Start instance refresh to pull new Docker image
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{"MinHealthyPercentage": 90, "InstanceWarmup": 60}' \
+            --query 'InstanceRefreshId' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ ! -z "$REFRESH_ID" ]; then
+            echo "✅ Instance refresh started: $REFRESH_ID"
+            echo "⏳ EC2 instances will pull the new Docker image from ECR"
+          else
+            echo "::warning::Could not start instance refresh. Manual deployment may be required."
+          fi
         fi
         
         # Get Load Balancer DNS from CloudFormation stack outputs
@@ -143,7 +170,10 @@ jobs:
         if [ ! -z "$LB_DNS" ]; then
           echo "LB_DNS=$LB_DNS" >> $GITHUB_ENV
           echo "DEPLOYMENT_URL=http://$LB_DNS" >> $GITHUB_ENV
-          echo "🚀 Application deployed successfully!"
+          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
+          echo "AWS_REGION=$AWS_REGION" >> $GITHUB_ENV
+          
+          echo "🚀 Application deployment initiated!"
           echo "📍 Load Balancer DNS: $LB_DNS"
           echo "🔗 Application URL: http://$LB_DNS"
           echo "📚 API Documentation: http://$LB_DNS/docs"
@@ -163,21 +193,39 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Environment: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Clickable URLs" >> $GITHUB_STEP_SUMMARY
+        echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| **🌐 Application** | [http://${{ env.LB_DNS }}](http://${{ env.LB_DNS }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **📚 API Documentation** | [http://${{ env.LB_DNS }}/docs](http://${{ env.LB_DNS }}/docs) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **❤️ Health Check** | [http://${{ env.LB_DNS }}/health](http://${{ env.LB_DNS }}/health) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **🐳 ECR Repository** | [View in AWS Console](https://console.aws.amazon.com/ecr/repositories/private/${{ env.AWS_ACCOUNT_ID }}/fastapi-${{ needs.setup.outputs.environment }}?region=${{ env.AWS_REGION }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **📦 ECR Images** | [View Images](https://console.aws.amazon.com/ecr/repositories/private/${{ env.AWS_ACCOUNT_ID }}/fastapi-${{ needs.setup.outputs.environment }}/images?region=${{ env.AWS_REGION }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **⚖️ Load Balancer** | [View in AWS Console](https://console.aws.amazon.com/ec2/v2/home?region=${{ env.AWS_REGION }}#LoadBalancers:) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **🖥️ EC2 Instances** | [View in AWS Console](https://console.aws.amazon.com/ec2/v2/home?region=${{ env.AWS_REGION }}#Instances:) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **🔐 Secrets Manager** | [View Secrets](https://console.aws.amazon.com/secretsmanager/home?region=${{ env.AWS_REGION }}#/listSecrets) |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Deployment Details" >> $GITHUB_STEP_SUMMARY
         echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
         echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Application URL** | http://${{ env.LB_DNS }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| **API Documentation** | http://${{ env.LB_DNS }}/docs |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Health Check** | http://${{ env.LB_DNS }}/health |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Load Balancer DNS** | ${{ env.LB_DNS }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Docker Image Tag** | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| **ECR Repository** | ${{ env.ECR_URI }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Load Balancer DNS** | \`${{ env.LB_DNS }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Docker Image Tag** | \`${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ECR URI** | \`${{ env.ECR_URI }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Full Image** | \`${{ env.ECR_URI }}:${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Deployment Info" >> $GITHUB_STEP_SUMMARY
-        echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔍 Deployment Info" >> $GITHUB_STEP_SUMMARY
+        echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Triggered by** | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Workflow Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Application successfully deployed and pulling configuration from AWS Secrets Manager" >> $GITHUB_STEP_SUMMARY
+        echo "### ℹ️ Notes" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ ECR image pushed successfully" >> $GITHUB_STEP_SUMMARY
+        echo "- 🔄 Instance refresh triggered - EC2 instances pulling new image" >> $GITHUB_STEP_SUMMARY
+        echo "- 🔒 Application pulls configuration from AWS Secrets Manager" >> $GITHUB_STEP_SUMMARY
+        echo "- ⏳ Full deployment may take 2-3 minutes for instance refresh" >> $GITHUB_STEP_SUMMARY
     
     - name: Comment Deployment URL on PR
       if: github.event_name == 'pull_request' && env.LB_DNS != ''
