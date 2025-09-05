@@ -9,7 +9,7 @@ router = APIRouter()
 async def get_items() -> Dict[str, Any]:
     return {
         "items": [
-            {"id": 1, "name": "Item 1", "version": "1.0"}, 
+            {"id": 1, "name": "Item 1", "version": "1.0"},
             {"id": 2, "name": "Item 2", "version": "1.0"},
             {"id": 3, "name": "Test Item - Blue-Green Deployment", "version": "1.1"}
         ],
