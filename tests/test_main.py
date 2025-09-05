@@ -25,7 +25,7 @@ def test_get_items():
     response = client.get("/api/v1/items")
     assert response.status_code == 200
     assert "items" in response.json()
-    assert len(response.json()["items"]) == 2
+    assert len(response.json()["items"]) == 3
 
 
 def test_get_item():

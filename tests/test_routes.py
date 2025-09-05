@@ -12,7 +12,7 @@ class TestItemRoutes:
         data = response.json()
         assert "items" in data
         assert isinstance(data["items"], list)
-        assert len(data["items"]) == 2
+        assert len(data["items"]) == 3
         
     def test_get_items_structure(self):
         response = client.get("/api/v1/items")
