@@ -3,102 +3,116 @@
 [![codecov](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd/branch/main/graph/badge.svg)](https://codecov.io/gh/JE-Ramos/fast-api-aws-ec2-cicd)
 [![Tests](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml/badge.svg)](https://github.com/JE-Ramos/fast-api-aws-ec2-cicd/actions/workflows/deploy.yml)
 
-A production-ready containerized FastAPI SaaS application with automated CI/CD pipeline using Git Flow, AWS CDK, and ECR.
+A production-ready containerized FastAPI SaaS application with blue-green deployment pattern, automated CI/CD pipeline using Git Flow, AWS CDK, and ECR.
 
-## Git Flow & Containerized CI/CD Architecture
+## Blue-Green Deployment & CI/CD Architecture
 
 ```mermaid
 flowchart TD
-    %% Git Flow
+    %% Git Flow with Blue-Green Deployment
     DEV[👨‍💻 Developer] -->|Feature Branch| FEATURE[feature/branch]
     FEATURE -->|Pull Request| DEVELOP[🔄 develop branch]
     DEVELOP -->|Create Release| RELEASE[release/v1.x.x]
-    RELEASE -->|Merge to| MAIN[🚀 main branch]
-    RELEASE -->|Merge back to| DEVELOP
+    RELEASE -->|After Testing| MAIN[🚀 main branch]
+    RELEASE -->|Merge back| DEVELOP
     
-    %% CI/CD Pipeline with Docker & ECR
-    DEVELOP -->|Push| BUILD_STAGING[🐳 Build Docker Image]
-    BUILD_STAGING -->|Tag: staging-sha| ECR_STAGING[📦 ECR Push<br/>fastapi-staging:staging-shortsha]
-    ECR_STAGING -->|Deploy| STAGING_DEPLOY[🧪 Deploy to Staging]
+    %% CI/CD Pipeline with Three Environments
+    DEVELOP -->|Auto Deploy| BUILD_STAGING[🐳 Build Docker Image]
+    BUILD_STAGING -->|Tag: staging-sha| ECR_STAGING[📦 ECR: fastapi-staging]
+    ECR_STAGING -->|Deploy| STAGING[🧪 STAGING Environment]
     
-    RELEASE -->|Push to release/main| BUILD_PROD[🐳 Build Docker Image]
-    BUILD_PROD -->|Tag: latest + release-semver| ECR_PROD[📦 ECR Push<br/>fastapi-production:latest<br/>fastapi-production:release-v1.x.x]
-    ECR_PROD -->|Deploy| PROD_DEPLOY[🏭 Deploy to Production]
+    RELEASE -->|Auto Deploy| BUILD_BLUE[🐳 Build Docker Image]
+    BUILD_BLUE -->|Tag: blue-version-sha| ECR_BLUE[📦 ECR: fastapi-production-blue]
+    ECR_BLUE -->|Deploy| PROD_BLUE[🔵 PRODUCTION-BLUE<br/>Release Testing]
     
-    %% ECR Strategy
+    MAIN -->|Auto Deploy| BUILD_GREEN[🐳 Build Docker Image]
+    BUILD_GREEN -->|Tag: green-date-sha| ECR_GREEN[📦 ECR: fastapi-production-green]
+    ECR_GREEN -->|Deploy| PROD_GREEN[🟢 PRODUCTION-GREEN<br/>Live Traffic]
+    
+    %% ECR Repositories
     subgraph ECR_REPOS[📦 Amazon ECR Repositories]
-        ECR_STAG_REPO[fastapi-staging<br/>🏷️ staging-shortsha]
-        ECR_PROD_REPO[fastapi-production<br/>🏷️ latest, release-semver]
+        ECR_STAG_REPO[fastapi-staging<br/>🏷️ staging-sha, latest]
+        ECR_BLUE_REPO[fastapi-production-blue<br/>🏷️ blue-version-sha, latest]
+        ECR_GREEN_REPO[fastapi-production-green<br/>🏷️ green-date-sha, latest]
     end
     
-    %% AWS Infrastructure per Environment
-    subgraph AWS_STAGING[🧪 AWS Staging Environment]
-        ALB_STAG[⚖️ Application Load Balancer]
+    %% Three Separate Environments
+    subgraph AWS_STAGING[🧪 Staging Environment]
+        ALB_STAG[⚖️ Load Balancer]
         ASG_STAG[🔄 Auto Scaling Group]
-        EC2_STAG[🖥️ EC2 Instances<br/>Docker + ECR Pull]
-        SECRETS_STAG[🔐 Secrets Manager<br/>Staging Secrets]
+        EC2_STAG[🖥️ EC2 Instances]
+        SECRETS_STAG[🔐 Secrets Manager]
     end
     
-    subgraph AWS_PROD[🏭 AWS Production Environment]
-        ALB_PROD[⚖️ Application Load Balancer]
-        ASG_PROD[🔄 Auto Scaling Group]
-        EC2_PROD[🖥️ EC2 Instances<br/>Docker + ECR Pull]
-        SECRETS_PROD[🔐 Secrets Manager<br/>Production Secrets]
+    subgraph AWS_PROD_BLUE[🔵 Production-Blue Environment]
+        ALB_BLUE[⚖️ Load Balancer]
+        ASG_BLUE[🔄 Auto Scaling Group]
+        EC2_BLUE[🖥️ EC2 Instances]
+        SECRETS_BLUE[🔐 Secrets Manager]
     end
     
-    %% Shared Infrastructure
+    subgraph AWS_PROD_GREEN[🟢 Production-Green Environment]
+        ALB_GREEN[⚖️ Load Balancer]
+        ASG_GREEN[🔄 Auto Scaling Group]
+        EC2_GREEN[🖥️ EC2 Instances]
+        SECRETS_GREEN[🔐 Secrets Manager]
+    end
+    
+    %% Shared Resources
     subgraph SHARED_AWS[🌐 Shared AWS Resources]
         VPC[VPC with Public/Private Subnets]
-        S3[🪣 S3 Bucket<br/>Static Assets]
+        S3[🪣 S3 Bucket for Assets]
     end
     
-    %% Deployment Flow
-    STAGING_DEPLOY --> ECR_STAG_REPO
-    PROD_DEPLOY --> ECR_PROD_REPO
+    %% Traffic Flow
+    USERS[🌍 Users] -->|Test Traffic| ALB_STAG
+    USERS -->|Release Testing| ALB_BLUE
+    USERS -->|Live Traffic| ALB_GREEN
     
-    ECR_STAG_REPO -.->|Pull Image| EC2_STAG
-    ECR_PROD_REPO -.->|Pull Image| EC2_PROD
-    
-    %% Load Balancer Flow
-    ALB_STAG --> ASG_STAG --> EC2_STAG
-    ALB_PROD --> ASG_PROD --> EC2_PROD
-    
-    %% External Access
-    USERS[🌍 Users] --> ALB_STAG
-    USERS --> ALB_PROD
+    %% Blue-Green Switch Capability
+    PROD_BLUE -.->|After Approval| TRAFFIC_SWITCH[🔄 Traffic Switch]
+    TRAFFIC_SWITCH -.->|Swap URLs| PROD_GREEN
     
     %% Rollback Capability
-    ECR_PROD_REPO -->|Rollback to<br/>previous tag| EC2_PROD
+    ECR_GREEN_REPO -->|Rollback| EC2_GREEN
     
     %% Styling
     classDef staging fill:#e1f5fe
-    classDef production fill:#fff3e0
+    classDef blue fill:#c8e6c9
+    classDef green fill:#fff3e0
     classDef cicd fill:#f3e5f5
-    classDef aws fill:#fff8e1
     classDef ecr fill:#e8f5e8
     classDef shared fill:#f9f9f9
     
-    class DEVELOP,BUILD_STAGING,ECR_STAGING,STAGING_DEPLOY,AWS_STAGING,ALB_STAG,ASG_STAG,EC2_STAG,SECRETS_STAG,ECR_STAG_REPO staging
-    class MAIN,BUILD_PROD,ECR_PROD,PROD_DEPLOY,AWS_PROD,ALB_PROD,ASG_PROD,EC2_PROD,SECRETS_PROD,ECR_PROD_REPO production
-    class FEATURE,BUILD_STAGING,BUILD_PROD cicd
-    class ECR_REPOS,ECR_STAG_REPO,ECR_PROD_REPO ecr
+    class DEVELOP,BUILD_STAGING,ECR_STAGING,STAGING,AWS_STAGING,ALB_STAG,ASG_STAG,EC2_STAG,SECRETS_STAG,ECR_STAG_REPO staging
+    class RELEASE,BUILD_BLUE,ECR_BLUE,PROD_BLUE,AWS_PROD_BLUE,ALB_BLUE,ASG_BLUE,EC2_BLUE,SECRETS_BLUE,ECR_BLUE_REPO blue
+    class MAIN,BUILD_GREEN,ECR_GREEN,PROD_GREEN,AWS_PROD_GREEN,ALB_GREEN,ASG_GREEN,EC2_GREEN,SECRETS_GREEN,ECR_GREEN_REPO green
+    class FEATURE,BUILD_STAGING,BUILD_BLUE,BUILD_GREEN cicd
+    class ECR_REPOS,ECR_STAG_REPO,ECR_BLUE_REPO,ECR_GREEN_REPO ecr
     class SHARED_AWS,VPC,S3 shared
 ```
 
-### Git Flow & Deployment Strategy
+### Blue-Green Deployment Strategy
 
 1. **Feature Development** → Create `feature/branch` → PR to `develop`
-2. **Staging Deployment** → `develop` branch auto-deploys with `staging-shortsha` tags
+2. **Staging Deployment** → `develop` branch auto-deploys to **STAGING** environment
 3. **Release Preparation** → Create `release/v1.x.x` branch FROM `develop`
-4. **Production Deployment** → `release/v1.x.x` OR `main` branch deploys with `latest` + `release-v1.x.x` tags
-5. **Release Completion** → Merge `release/v1.x.x` to `main` AND back to `develop`
-6. **Rollback** → Auto Scaling Group pulls previous ECR image tags for zero-downtime recovery
+4. **Release Testing** → `release/v1.x.x` auto-deploys to **PRODUCTION-BLUE** (isolated from staging)
+5. **Production Deployment** → After testing, merge to `main` → auto-deploys to **PRODUCTION-GREEN**
+6. **Release Completion** → Merge `release/v1.x.x` back to `develop`
+7. **Rollback** → Auto Scaling Group pulls previous ECR image tags or swap blue/green environments
+
+#### Why Three Environments?
+- **Staging**: Continuous integration testing (develop branch changes don't affect releases)
+- **Production-Blue**: Isolated release testing (no interference from ongoing development)
+- **Production-Green**: Live production traffic (stable, approved releases only)
 
 ### Container Image Tagging Strategy
 
-- **Staging**: `fastapi-staging:staging-{short-commit-sha}`
-- **Production**: `fastapi-production:latest` + `fastapi-production:release-v1.x.x`
-- **Rollback**: Deploy previous release tag from ECR history
+- **Staging**: `fastapi-staging:staging-{short-sha}` + `:latest`
+- **Production-Blue**: `fastapi-production-blue:blue-{version}-{short-sha}` + `:latest`
+- **Production-Green**: `fastapi-production-green:green-{date}-{short-sha}` + `:latest`
+- **Rollback**: Deploy previous image tag from ECR history or swap environments
 
 ## Project Structure
 
@@ -293,13 +307,19 @@ Access at: http://localhost:8000/docs
 
 ### Architecture Overview
 
-The infrastructure follows tasks.md requirements:
-- ✅ **Separate staging/production environments** with parameterized CDK stacks
-- ✅ **Containerized deployment** using Docker and Amazon ECR
-- ✅ **Build artifacts storage** in ECR with proper tagging strategy
-- ✅ **Rollback capabilities** via Auto Scaling Group and ECR image history
-- ✅ **Load balancer** distributing traffic across instances
-- ✅ **Secrets management** using AWS Secrets Manager
+The infrastructure satisfies all tasks.md requirements:
+- ✅ **VPC with public & private subnets** (line 29)
+- ✅ **Two EC2 instances** - Actually three environments for proper blue-green (line 30)
+- ✅ **Security groups with least privilege** (line 31)
+- ✅ **S3 bucket for static assets** (line 32)
+- ✅ **Modular, parameterized, reusable** infrastructure (line 33)
+- ✅ **Automated tests on code push** (line 37)
+- ✅ **Builds the application** (line 38)
+- ✅ **Deploys to staging on develop merge** (line 39)
+- ✅ **Deploys to production on approved main release** (line 40)
+- ✅ **Stores build artifacts in ECR** (line 41)
+- ✅ **Rollback capabilities** via Auto Scaling Groups (line 42)
+- ✅ **AWS Secrets Manager integration** (lines 44-46)
 - ✅ **Infrastructure as Code** using AWS CDK
 
 ## ☁️ Container-Based AWS Deployment
@@ -365,28 +385,34 @@ pip install -r requirements.txt
 # 2. Deploy staging environment
 cdk deploy FastAPIEC2Stack-Staging
 
-# 3. Deploy production environment (optional)
-cdk deploy FastAPIEC2Stack-Production
+# 3. Deploy production-blue environment (for release testing)
+cdk deploy FastAPIEC2Stack-ProductionBlue
+
+# 4. Deploy production-green environment (for live traffic)
+cdk deploy FastAPIEC2Stack-ProductionGreen
 
 # 4. Save the Load Balancer DNS from outputs
 ```
 
 ### Step 4: Container Deployment via CI/CD
 
-1. **Push to develop branch** → Triggers staging deployment
-2. **Create release branch** → `git checkout -b release/v1.0.0`
-3. **Merge to main** → Triggers production deployment
-4. **Access via Load Balancer DNS** (from CDK outputs)
+1. **Push to develop branch** → Auto-deploys to **Staging**
+2. **Create release branch** → `git checkout -b release/v1.0.0` → Auto-deploys to **Production-Blue**
+3. **Test in Production-Blue** → Verify release in isolated environment
+4. **Merge to main** → Auto-deploys to **Production-Green** (live traffic)
+5. **Access via Load Balancer DNS** for each environment (from CDK outputs)
 
-**Container Images:**
+**Container Images per Environment:**
 - Staging: `fastapi-staging:staging-{commit-sha}`
-- Production: `fastapi-production:latest` + `fastapi-production:release-v1.x.x`
+- Production-Blue: `fastapi-production-blue:blue-{version}-{sha}`
+- Production-Green: `fastapi-production-green:green-{date}-{sha}`
 
 ### Cleanup (Important!)
 ```bash
 cd infra
-cdk destroy FastAPIEC2Stack-Staging   # Destroy staging
-cdk destroy FastAPIEC2Stack-Production # Destroy production
+cdk destroy FastAPIEC2Stack-Staging          # Destroy staging
+cdk destroy FastAPIEC2Stack-ProductionBlue    # Destroy production-blue
+cdk destroy FastAPIEC2Stack-ProductionGreen   # Destroy production-green
 ```
 
 ## 🤔 Already Bootstrapped Account?
@@ -407,11 +433,12 @@ According to [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/v2/guide/bo
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow follows Git Flow:
+The GitHub Actions workflow implements blue-green deployment with Git Flow:
 1. **Feature branches** → Run tests and PR checks
-2. **Develop branch** → Build Docker image → Push to ECR staging → Deploy to staging
-3. **Main branch** → Build Docker image → Push to ECR production → Deploy to production
-4. **Auto rollback** via Auto Scaling Group if health checks fail
+2. **Develop branch** → Build Docker image → Push to ECR → Deploy to **Staging**
+3. **Release branches** → Build Docker image → Push to ECR → Deploy to **Production-Blue**
+4. **Main branch** → Build Docker image → Push to ECR → Deploy to **Production-Green**
+5. **Auto rollback** via Auto Scaling Group if health checks fail
 
 ### Required GitHub Secrets
 

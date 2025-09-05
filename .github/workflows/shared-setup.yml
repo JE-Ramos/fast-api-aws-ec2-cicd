@@ -28,9 +28,14 @@ jobs:
       run: |
         if [ "${{ inputs.environment }}" != "" ]; then
           ENVIRONMENT="${{ inputs.environment }}"
-        elif [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
-          ENVIRONMENT="production"
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          # Main branch deploys to production-green (live production)
+          ENVIRONMENT="production-green"
+        elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+          # Release branches deploy to production-blue (pre-production testing)
+          ENVIRONMENT="production-blue"
         else
+          # Develop and other branches deploy to staging
           ENVIRONMENT="staging"
         fi
         
@@ -40,3 +45,12 @@ jobs:
         echo "aws-region=$AWS_REGION" >> $GITHUB_OUTPUT
         echo "🎯 Target Environment: $ENVIRONMENT"
         echo "🌍 AWS Region: $AWS_REGION"
+        
+        # Log deployment flow for clarity
+        if [[ "$ENVIRONMENT" == "staging" ]]; then
+          echo "📍 Deploying to STAGING (develop branch)"
+        elif [[ "$ENVIRONMENT" == "production-blue" ]]; then
+          echo "🔵 Deploying to PRODUCTION-BLUE (release testing)"
+        elif [[ "$ENVIRONMENT" == "production-green" ]]; then
+          echo "🟢 Deploying to PRODUCTION-GREEN (live production)"
+        fi

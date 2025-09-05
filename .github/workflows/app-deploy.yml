@@ -90,37 +90,87 @@ jobs:
         # Build Docker image
         docker build -t $ECR_REPOSITORY .
         
-        if [ "$ENVIRONMENT" = "staging" ]; then
-          # Staging: tag with staging-shortsha
-          IMAGE_TAG="staging-$SHORT_SHA"
-          docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
-          docker push $ECR_URI:$IMAGE_TAG
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-        else
-          # Production: tag with latest and release-semver
-          docker tag $ECR_REPOSITORY $ECR_URI:latest
-          docker push $ECR_URI:latest
-          
-          # Extract semver from release branch or use commit for main
-          if [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
-            SEMVER=$(echo "${{ github.ref }}" | sed 's/refs\/heads\/release\///')
-            RELEASE_TAG="release-$SEMVER"
-          else
-            # Fallback for direct main branch pushes
-            RELEASE_TAG="release-$(date +%Y.%m.%d)-$SHORT_SHA"
-          fi
-          
-          docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
-          docker push $ECR_URI:$RELEASE_TAG
-          echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
-        fi
+        # Tag and push based on environment
+        case "$ENVIRONMENT" in
+          "staging")
+            # Staging: tag with staging-shortsha and latest
+            IMAGE_TAG="staging-$SHORT_SHA"
+            docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+            docker tag $ECR_REPOSITORY $ECR_URI:latest
+            docker push $ECR_URI:$IMAGE_TAG
+            docker push $ECR_URI:latest
+            echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+            ;;
+            
+          "production-blue")
+            # Production-Blue: tag for release testing
+            if [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+              SEMVER=$(echo "${{ github.ref }}" | sed 's/refs\/heads\/release\///')
+              IMAGE_TAG="blue-$SEMVER-$SHORT_SHA"
+            else
+              IMAGE_TAG="blue-$SHORT_SHA"
+            fi
+            docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+            docker tag $ECR_REPOSITORY $ECR_URI:latest
+            docker push $ECR_URI:$IMAGE_TAG
+            docker push $ECR_URI:latest
+            echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+            ;;
+            
+          "production-green")
+            # Production-Green: tag for live production
+            docker tag $ECR_REPOSITORY $ECR_URI:latest
+            docker push $ECR_URI:latest
+            
+            # Create release tag
+            if [[ "${{ github.ref }}" == refs/heads/main ]]; then
+              RELEASE_TAG="green-$(date +%Y.%m.%d)-$SHORT_SHA"
+            else
+              RELEASE_TAG="green-$SHORT_SHA"
+            fi
+            
+            docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
+            docker push $ECR_URI:$RELEASE_TAG
+            echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+            ;;
+            
+          *)
+            echo "::error::Unknown environment: $ENVIRONMENT"
+            exit 1
+            ;;
+        esac
         
         echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
         echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
     
     - name: Trigger EC2 Deployment Update
+      id: get-deployment-url
       run: |
-        STACK_NAME="FastAPIEC2Stack-${{ needs.setup.outputs.environment^}}"
+        ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        
+        # Map environment to stack name
+        case "$ENVIRONMENT" in
+          "staging")
+            STACK_NAME="FastAPIEC2Stack-Staging"
+            ;;
+          "production-blue")
+            STACK_NAME="FastAPIEC2Stack-ProductionBlue"
+            ;;
+          "production-green")
+            STACK_NAME="FastAPIEC2Stack-ProductionGreen"
+            ;;
+          *)
+            echo "::error::Unknown environment: $ENVIRONMENT"
+            exit 1
+            ;;
+        esac
+        
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        AWS_REGION="${{ needs.setup.outputs.aws-region }}"
+        
+        echo "🔍 Looking for stack: $STACK_NAME"
+        echo "📍 Environment: $ENVIRONMENT"
+        echo "🌎 Region: $AWS_REGION"
         
         # Check if stack exists
         STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].StackName' --output text 2>/dev/null || echo "")
@@ -130,34 +180,106 @@ jobs:
           exit 0  # Don't fail, just skip deployment
         fi
         
-        # Get EC2 instance info
-        INSTANCE_ID=$(aws cloudformation describe-stacks \
+        # Get Auto Scaling Group name from stack
+        echo "📋 Fetching Auto Scaling Group from stack..."
+        ASG_NAME=$(aws cloudformation describe-stack-resources \
           --stack-name $STACK_NAME \
-          --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+          --query "StackResources[?ResourceType=='AWS::AutoScaling::AutoScalingGroup'].PhysicalResourceId" \
           --output text 2>/dev/null || echo "")
         
-        if [ ! -z "$INSTANCE_ID" ]; then
-          EC2_HOST=$(aws ec2 describe-instances \
-            --instance-ids $INSTANCE_ID \
-            --query "Reservations[0].Instances[0].PublicIpAddress" \
+        if [ ! -z "$ASG_NAME" ]; then
+          echo "✅ Found Auto Scaling Group: $ASG_NAME"
+          echo "🔄 Triggering instance refresh..."
+          
+          # Start instance refresh to pull new Docker image
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{"MinHealthyPercentage": 90, "InstanceWarmup": 60}' \
+            --query 'InstanceRefreshId' \
             --output text 2>/dev/null || echo "")
           
-          if [ ! -z "$EC2_HOST" ]; then
-            echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
-            echo "🚀 Deployed to EC2 instance: $EC2_HOST"
-            echo "🔒 Application will pull latest config from Secrets Manager automatically"
+          if [ ! -z "$REFRESH_ID" ]; then
+            echo "✅ Instance refresh started: $REFRESH_ID"
+            echo "⏳ EC2 instances will pull the new Docker image from ECR"
+          else
+            echo "::warning::Could not start instance refresh. Manual deployment may be required."
           fi
+        else
+          echo "::warning::No Auto Scaling Group found in stack $STACK_NAME"
+        fi
+        
+        # Get Load Balancer DNS from CloudFormation stack outputs
+        LB_DNS=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNS'].OutputValue" \
+          --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$LB_DNS" ]; then
+          echo "LB_DNS=$LB_DNS" >> $GITHUB_ENV
+          echo "DEPLOYMENT_URL=http://$LB_DNS" >> $GITHUB_ENV
+          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
+          echo "AWS_REGION=$AWS_REGION" >> $GITHUB_ENV
+          
+          echo "🚀 Application deployment initiated!"
+          echo "📍 Load Balancer DNS: $LB_DNS"
+          echo "🔗 Application URL: http://$LB_DNS"
+          echo "📚 API Documentation: http://$LB_DNS/docs"
+          echo "🔒 Application pulls configuration from AWS Secrets Manager"
+          
+          # Set GitHub Actions output
+          echo "deployment_url=http://$LB_DNS" >> $GITHUB_OUTPUT
+          echo "load_balancer_dns=$LB_DNS" >> $GITHUB_OUTPUT
+        else
+          echo "::warning::Could not retrieve Load Balancer DNS from stack"
+        fi
+    
+    - name: Deployment Summary
+      if: steps.get-deployment-url.outputs.load_balancer_dns != ''
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Environment: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Clickable URLs" >> $GITHUB_STEP_SUMMARY
+        echo "| Service | URL |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| **🌐 Application** | [http://${{ env.LB_DNS }}](http://${{ env.LB_DNS }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **📚 API Documentation** | [http://${{ env.LB_DNS }}/docs](http://${{ env.LB_DNS }}/docs) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **❤️ Health Check** | [http://${{ env.LB_DNS }}/health](http://${{ env.LB_DNS }}/health) |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Deployment Details" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Environment Type** | ${{ needs.setup.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Load Balancer DNS** | \`${{ env.LB_DNS }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Docker Image Tag** | \`${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Environment-specific notes
+        if [[ "${{ needs.setup.outputs.environment }}" == "staging" ]]; then
+          echo "### 📍 STAGING Environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Continuous integration testing for develop branch" >> $GITHUB_STEP_SUMMARY
+        elif [[ "${{ needs.setup.outputs.environment }}" == "production-blue" ]]; then
+          echo "### 🔵 PRODUCTION-BLUE Environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Isolated release testing environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Test release before promoting to production" >> $GITHUB_STEP_SUMMARY
+        elif [[ "${{ needs.setup.outputs.environment }}" == "production-green" ]]; then
+          echo "### 🟢 PRODUCTION-GREEN Environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Live production environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Serving actual user traffic" >> $GITHUB_STEP_SUMMARY
         fi
     
     - name: Comment Deployment URL on PR
-      if: github.event_name == 'push' && env.EC2_HOST != ''
+      if: github.event_name == 'pull_request' && env.LB_DNS != ''
       uses: actions/github-script@v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const environment = process.env.ENVIRONMENT;
-          const ec2Host = process.env.EC2_HOST;
-          const deploymentUrl = `http://${ec2Host}:8000`;
+          const lbDns = process.env.LB_DNS;
+          const deploymentUrl = process.env.DEPLOYMENT_URL;
           const imageTag = process.env.IMAGE_TAG;
           
           // Get the current branch
