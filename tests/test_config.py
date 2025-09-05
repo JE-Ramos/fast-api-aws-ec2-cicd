@@ -6,7 +6,7 @@ from app.config import Settings, get_settings
 def test_default_settings():
     settings = Settings()
     assert settings.app_name == "FastAPI AWS App"
-    assert settings.environment == "development"
+    assert settings.environment == "staging"
     assert settings.debug is True
     assert settings.api_v1_prefix == "/api/v1"
     assert settings.aws_region == "us-east-1"
