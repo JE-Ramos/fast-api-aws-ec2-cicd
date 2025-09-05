@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     app_name: str = "FastAPI AWS App"
-    environment: str = "development"
+    environment: str = Field(default="staging", description="Deployment environment (staging, production, development)")
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
 
