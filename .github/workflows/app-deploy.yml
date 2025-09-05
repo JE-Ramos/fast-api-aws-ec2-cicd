@@ -94,13 +94,15 @@ jobs:
         docker build -t $ECR_REPOSITORY .
         
         if [ "$ENVIRONMENT" = "staging" ]; then
-          # Staging: tag with staging-shortsha
+          # Staging: tag with staging-shortsha and latest
           IMAGE_TAG="staging-$SHORT_SHA"
           docker tag $ECR_REPOSITORY $ECR_URI:$IMAGE_TAG
+          docker tag $ECR_REPOSITORY $ECR_URI:latest
           docker push $ECR_URI:$IMAGE_TAG
+          docker push $ECR_URI:latest
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
         else
-          # Production: tag with latest and release-semver
+          # Production: tag with latest, release-semver, and production-shortsha
           docker tag $ECR_REPOSITORY $ECR_URI:latest
           docker push $ECR_URI:latest
           
@@ -113,8 +115,11 @@ jobs:
             RELEASE_TAG="release-$(date +%Y.%m.%d)-$SHORT_SHA"
           fi
           
+          PROD_TAG="production-$SHORT_SHA"
           docker tag $ECR_REPOSITORY $ECR_URI:$RELEASE_TAG
+          docker tag $ECR_REPOSITORY $ECR_URI:$PROD_TAG
           docker push $ECR_URI:$RELEASE_TAG
+          docker push $ECR_URI:$PROD_TAG
           echo "IMAGE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
         fi
         
